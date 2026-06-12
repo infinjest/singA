@@ -98,7 +98,7 @@ LATEST=$(curl -sL --max-time 15 \
 [ -n "$LATEST" ] || die "Cannot reach GitHub API — check internet connection"
 log "       Version: ${LATEST}"
 
-TARBALL_URL="https://github.com/${SB_REPO}/releases/download/${LATEST}/sing-box-${LATEST#v}-${ARCH}.tar.gz"
+TARBALL_URL="https://github.com/${SB_REPO}/releases/download/${LATEST}/sing-box-${LATEST#v}-${ARCH}-compressed.tar.gz"
 run "curl -sL --max-time 120 '${TARBALL_URL}' -o /tmp/sb.tar.gz" || die "Download failed"
 run "tar -xzf /tmp/sb.tar.gz -C /tmp/ 2>/dev/null"
 
