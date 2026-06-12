@@ -1,0 +1,4 @@
+*.vpn
+*.conf
+*.srs
+/tmp/

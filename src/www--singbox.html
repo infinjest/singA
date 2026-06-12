@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Sing-Box Control Plane v7</title>
+    <style>
+        :root { --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; --accent: #2563eb; --border: #334155; --danger: #ef4444; --success: #10b981; --warn: #f59e0b; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; }
+        body { background: var(--bg); color: var(--text); padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+        .status-pill { font-size: .8rem; padding: 4px 10px; border-radius: 20px; background: var(--card); border: 1px solid var(--border); }
+        .status-pill.running { border-color: var(--success); color: var(--success); }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        .tab-btn { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 10px 20px; cursor: pointer; border-radius: 6px; }
+        .tab-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
+        .card { background: var(--card); border: 1px solid var(--border); padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .card h3 { margin-bottom: 16px; font-size: 1rem; }
+        .form-group { margin-bottom: 14px; }
+        label { display: block; margin-bottom: 5px; color: #94a3b8; font-size: .85rem; }
+        input[type="text"], input[type="password"], textarea, select { width: 100%; padding: 9px 12px; background: var(--bg); border: 1px solid var(--border); color: #fff; border-radius: 6px; }
+        .btn { background: var(--accent); color: #fff; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: .9rem; }
+        .btn:disabled { opacity: .5; cursor: not-allowed; }
+        .btn-danger  { background: var(--danger); }
+        .btn-success { background: var(--success); }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: .9rem; }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+        th { color: #94a3b8; font-weight: 500; }
+        .latency { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: .8rem; font-weight: 600; }
+        .lat-good { background: #065f46; color: #6ee7b7; }
+        .lat-ok   { background: #78350f; color: #fcd34d; }
+        .lat-bad  { background: #7f1d1d; color: #fca5a5; }
+        .lat-none { color: #64748b; }
+        .sub-badge { font-size: .75rem; color: #64748b; margin-left: 6px; }
+        iframe { width: 100%; height: 75vh; border: none; border-radius: 8px; }
+        #login-overlay { position: fixed; inset: 0; background: var(--bg); display: flex; justify-content: center; align-items: center; z-index: 1000; }		
+        .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; justify-content:center; align-items:center; z-index:500; }
+        .modal { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:24px; width:520px; max-width:95vw; max-height:90vh; overflow-y:auto; }
+        .modal h3 { margin-bottom:16px; }
+        .modal-footer { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; }
+        .btn-sm { padding:4px 10px; font-size:.85rem; }
+        .toggle-off { background: var(--border); color: #94a3b8; }
+    </style>
+</head>
+<body>
+
+<div id="login-overlay">
+    <div class="card" style="width:340px">
+        <h2 style="margin-bottom:16px">Вход в шлюз</h2>
+        <div class="form-group"><input type="password" id="rpc-pass" placeholder="Пароль роутера" onkeydown="if(event.key==='Enter') initAuth()"></div>
+        <button class="btn" style="width:100%" onclick="initAuth()">Войти</button>
+        <p id="login-error" style="color:var(--danger);margin-top:10px;font-size:.85rem"></p>
+    </div>
+</div>
+
+<div class="container">
+    <header>
+        <h2>Sing-Box Control Plane v7</h2>
+        <div style="display:flex;gap:10px;align-items:center">
+            <span id="pill-core" class="status-pill">Ядро: ...</span>
+            <span id="pill-sub"  class="status-pill">Подписки: ожидание</span>
+            <span id="pill-node" class="status-pill" style="display:none"></span>
+        </div>
+    </header>
+
+    <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab(event,'routing')">Параметры</button>
+        <button class="tab-btn"        onclick="switchTab(event,'nodes')">Узлы и Подписки</button>
+        <button class="tab-btn"        onclick="switchTab(event,'dashboard')">Дашборд</button>
+    </div>
+
+    <div id="tab-routing" class="tab-content active">
+        <div class="grid">
+            <div class="card">
+                <h3>Конфигурация прокси</h3>
+                <div class="form-group" style="display: inline-block; margin-right: 20px;">
+                    <label><input type="checkbox" id="cfg-enabled"> Включить TProxy</label>
+                </div>
+                <div class="form-group" style="display: inline-block; margin-right: 20px;">
+                    <label><input type="checkbox" id="cfg-rdbypass"> Проксировать заблокированные RU ресурсы</label>
+                </div>
+                <div class="form-group" style="display: inline-block;">
+                    <label><input type="checkbox" id="cfg-failover"> Балансировка — URLTest</label>
+                </div>
+                <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
+                    <div class="form-group" style="flex: 1; min-width: 120px;">
+                        <label>Порт перехвата</label>
+                        <input type="text" id="cfg-port">
+                    </div>
+                    <div class="form-group" style="flex: 1; min-width: 150px;">
+                        <label>Cron баз РКН</label>
+                        <input type="text" id="cfg-cron" placeholder="0 4 * * 1">
+                    </div>
+                    <div class="form-group" style="flex: 2; min-width: 200px;">
+                        <label>Upstream DNS (в туннеле)</label>
+                        <input type="text" id="cfg-dns" placeholder="https://dns.cloudflare.com/dns-query">
+                    </div>
+                    <div class="form-group" style="flex: 2; min-width: 200px;">
+                        <label>Local DNS (напрямую, ISP)</label>
+                        <input type="text" id="cfg-local-dns" placeholder="tcp://77.88.8.8">
+                    </div>
+                </div>
+                <button class="btn btn-success" id="btn-apply" onclick="saveSettings()" style="margin-top: 10px;">
+                    Применить конфигурацию
+                </button>
+            </div>
+
+            <div class="card">
+                <h3>Смена пароля шлюза (root)</h3>
+                <div style="display: flex; gap: 15px; max-width: 500px;">
+                    <input type="password" id="new-password" placeholder="Введите новый пароль" style="flex: 1;">
+                    <button class="btn btn-danger" onclick="changeRouterPassword()">Изменить пароль</button>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h3>Правила маршрутизации (Исключения)</h3>
+                <div style="background: var(--bg); padding: 15px; border-radius: 6px; margin-bottom: 15px; border: 1px solid var(--border);">
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;">
+                        <div style="flex: 1; min-width: 140px;"><label>IP источника (LAN):</label><input type="text" id="rule-source" placeholder="Пусто = для всех"></div>
+                        <div style="flex: 2; min-width: 180px;"><label>Домены (через запятую):</label><input type="text" id="rule-domain" placeholder="google.com, netflix.com"></div>
+                        <div style="flex: 1; min-width: 140px;"><label>IP назначения:</label><input type="text" id="rule-ip" placeholder="8.8.8.8"></div>
+                        <div style="flex: 1; min-width: 120px;">
+                            <label>Действие:</label>
+                            <select id="rule-outbound"><option value="proxy">Proxy (Туннель)</option><option value="direct">Direct (Напрямую)</option></select>
+                        </div>
+                        <button class="btn" onclick="addUserRule()" style="height: 38px; padding: 0 15px;">Добавить</button>
+                    </div>
+                </div>
+                <table id="rules-table"><thead><tr><th>Источник</th><th>Домены</th><th>IP назначения</th><th>Действие</th><th></th></tr></thead><tbody></tbody></table>
+            </div>
+        </div>
+    </div>
+
+    <div id="tab-nodes" class="tab-content">
+        <div class="card">
+            <h3 style="display:flex;justify-content:space-between;align-items:center">
+                <span>Подписки</span>
+                <div style="display:flex;gap:8px">
+                    <input type="file" id="vpn-upload" style="display:none" accept=".vpn,.conf,.json" onchange="importVpnFile(event)">
+                    <button class="btn btn-success" onclick="document.getElementById('vpn-upload').click()">Импорт .vpn / .conf</button>
+                    <button class="btn" onclick="addSubscription()">+ Подписка</button>
+                </div>
+            </h3>
+            <table id="sub-table"><thead><tr><th>Имя</th><th>URL</th><th>Узлов</th><th>Действия</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="card">
+            <h3>Узлы</h3>
+            <table id="nodes-table"><thead><tr><th>Тег</th><th>Тип</th><th>Сервер</th><th>Порт</th><th>Latency</th><th></th></tr></thead><tbody></tbody></table>
+			<div style="display:flex;gap:8px">
+				<input type="file" id="vpn-upload-node" style="display:none" accept=".vpn,.conf,.json" onchange="importVpnFile(event)">
+				<button class="btn btn-success" onclick="document.getElementById('vpn-upload-node').click()">Импорт Файла</button>
+				<button class="btn btn-success" onclick="importVlessUri()">+ VLESS URI</button>
+				<button class="btn" onclick="addSubscription()">+ Подписка</button>
+			</div>
+        </div>
+    </div>
+
+    <div id="tab-dashboard" class="tab-content"><iframe id="dash-frame" src=""></iframe></div>
+</div>
+
+<script>
+let ubusToken = "00000000000000000000000000000000";
+let clashSecret = ""; let latencyMap = {}; let statusTimer = null;
+
+async function toggleNode(sec, newVal) {
+    await ubusCall("singbox", "edit_node", { section: sec, node: { enabled: newVal } });
+    await ubusCall("singbox", "apply");
+    loadData();
+}
+
+function openEditModal(sec, n) {
+    document.getElementById('edit-section').value = sec;
+    document.getElementById('edit-type').value    = n.type;
+    document.getElementById('edit-tag').value     = n.tag    || '';
+    document.getElementById('edit-server').value  = n.server || '';
+    document.getElementById('edit-port').value    = n.server_port || '';
+
+    const isAwg = n.type === 'amneziawg' || n.type === 'wireguard';
+    document.getElementById('edit-vless-fields').style.display = isAwg ? 'none' : '';
+    document.getElementById('edit-awg-fields').style.display   = isAwg ? '' : 'none';
+
+    if (!isAwg) {
+        document.getElementById('edit-uuid').value      = n.uuid      || '';
+        document.getElementById('edit-security').value  = n.security  || 'none';
+        document.getElementById('edit-sni').value       = n.sni       || '';
+        document.getElementById('edit-transport').value = n.transport || 'none';
+        document.getElementById('edit-path').value      = n.path      || '';
+    } else {
+        document.getElementById('edit-privkey').value   = n.private_key    || '';
+        document.getElementById('edit-pubkey').value    = n.peer_public_key || '';
+        document.getElementById('edit-localaddr').value = n.local_address   || '';
+        const isAmnezia = n.type === 'amneziawg';
+        document.getElementById('edit-amnezia-params').style.display = isAmnezia ? '' : 'none';
+        if (isAmnezia) {
+            document.getElementById('edit-jc').value   = n.jc   || '0';
+            document.getElementById('edit-jmin').value = n.jmin || '0';
+            document.getElementById('edit-jmax').value = n.jmax || '0';
+            document.getElementById('edit-s1').value   = n.s1   || '0';
+            document.getElementById('edit-s2').value   = n.s2   || '0';
+            document.getElementById('edit-h1').value   = n.h1   || '0';
+            document.getElementById('edit-h2').value   = n.h2   || '0';
+            document.getElementById('edit-h3').value   = n.h3   || '0';
+            document.getElementById('edit-h4').value   = n.h4   || '0';
+        }
+    }
+    document.getElementById('edit-modal').style.display = 'flex';
+}
+
+function closeEditModal() {
+    document.getElementById('edit-modal').style.display = 'none';
+}
+
+async function saveEditNode() {
+    const sec  = document.getElementById('edit-section').value;
+    const type = document.getElementById('edit-type').value;
+    const isAwg = type === 'amneziawg' || type === 'wireguard';
+    
+    const node = {
+        tag: document.getElementById('edit-tag').value,
+        server: document.getElementById('edit-server').value,
+        server_port: document.getElementById('edit-port').value,
+    };
+    
+    if (!isAwg) {
+        node.uuid      = document.getElementById('edit-uuid').value;
+        node.security  = document.getElementById('edit-security').value;
+        node.sni       = document.getElementById('edit-sni').value;
+        node.transport = document.getElementById('edit-transport').value;
+        node.path      = document.getElementById('edit-path').value;
+    } else {
+        node.private_key     = document.getElementById('edit-privkey').value;
+        node.peer_public_key = document.getElementById('edit-pubkey').value;
+        node.local_address   = document.getElementById('edit-localaddr').value;
+        
+        // Сбор параметров обфускации только для AmneziaWG
+        if (type === 'amneziawg') {
+            node.jc   = document.getElementById('edit-jc').value || "0";
+            node.jmin = document.getElementById('edit-jmin').value || "0";
+            node.jmax = document.getElementById('edit-jmax').value || "0";
+            node.s1   = document.getElementById('edit-s1').value || "0";
+            node.s2   = document.getElementById('edit-s2').value || "0";
+            node.h1   = document.getElementById('edit-h1').value || "0";
+            node.h2   = document.getElementById('edit-h2').value || "0";
+            node.h3   = document.getElementById('edit-h3').value || "0";
+            node.h4   = document.getElementById('edit-h4').value || "0";
+        }
+    }
+    
+    const res = await ubusCall("singbox", "edit_node", { section: sec, node });
+    if (res.error) { alert('Ошибка: ' + res.error); return; }
+    
+    await ubusCall("singbox", "apply");
+    closeEditModal();
+    loadData();
+}
+
+async function ubusCall(obj, method, params = {}) {
+    try {
+        const res = await fetch('/ubus', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "call", params: [ubusToken, obj, method, params] }) });
+        const d = await res.json();
+        return (d.result && d.result[1]) ? d.result[1] : (d.result || { error: true });
+    } catch(e) { return { error: true, message: e.message }; }
+}
+
+async function initAuth() {
+    const pass = document.getElementById('rpc-pass').value;
+    document.getElementById('login-error').textContent = '';
+    try {
+        const res = await fetch('/ubus', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "call", params: ["00000000000000000000000000000000", "session", "login", { username: "root", password: pass }] }) });
+        const d = await res.json();
+        if (d.result?.[1]?.ubus_rpc_session) {
+            ubusToken = d.result[1].ubus_rpc_session;
+            document.getElementById('login-overlay').style.display = 'none';
+            await loadData();
+            statusTimer = setInterval(updateStatus, 5000);
+        } else document.getElementById('login-error').textContent = 'Неверный пароль';
+    } catch(e) { document.getElementById('login-error').textContent = 'Ошибка соединения'; }
+}
+
+function switchTab(e, tabId) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    e.currentTarget.classList.add('active');
+    document.getElementById('tab-' + tabId).classList.add('active');
+}
+
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+async function updateStatus() {
+    const s = await ubusCall("singbox", "status");
+    const pill = document.getElementById('pill-core');
+    pill.textContent = "Ядро: " + (s.running ? "Запущен" : "Остановлен");
+    pill.className   = "status-pill" + (s.running ? " running" : "");
+    document.getElementById('pill-sub').textContent = s.sub_updating ? "Подписки: обновление..." : "Подписки: ожидание";
+
+    if (!clashSecret || !s.running) return;
+    try {
+        const r = await fetch(`http://${location.hostname}:9090/proxies`, { headers: { 'Authorization': `Bearer ${clashSecret}` } });
+        const data = await r.json();
+        const proxies = data.proxies || {};
+        const group = proxies['proxy'] || proxies['auto'];
+        
+        if (group?.now) {
+            const nodePill = document.getElementById('pill-node');
+            nodePill.style.display = 'inline-block';
+            const effectiveName = group.now === 'proxy-auto'
+                ? (proxies['proxy-auto']?.now || 'proxy-auto')
+                : group.now;
+            nodePill.textContent = '▶ ' + effectiveName;
+        }
+
+        const newMap = {};
+        for (const [name, p] of Object.entries(proxies)) {
+            if (p.history?.length > 0 && p.history[p.history.length - 1].delay) newMap[name] = p.history[p.history.length - 1].delay;
+        }
+        latencyMap = newMap;
+        refreshLatencyInTable();
+    } catch(e) { }
+}
+
+function latencyBadge(tagWithPrefix) {
+    let ms = null;
+    for (const [k, v] of Object.entries(latencyMap)) { if (k.endsWith(tagWithPrefix) || k === tagWithPrefix) { ms = v; break; } }
+    if (!ms) return `<span class="latency lat-none">—</span>`;
+    const cls = ms < 150 ? 'lat-good' : ms < 400 ? 'lat-ok' : 'lat-bad';
+    return `<span class="latency ${cls}">${ms} ms</span>`;
+}
+function refreshLatencyInTable() { document.querySelectorAll('[data-node-tag]').forEach(cell => { cell.innerHTML = latencyBadge(cell.dataset.nodeTag); }); }
+
+async function loadData() {
+    const cfg = await ubusCall("singbox", "get_config");
+    if (cfg.error) return;
+
+    document.getElementById('cfg-enabled').checked  = cfg.main?.enabled  === "1";
+    document.getElementById('cfg-port').value       = cfg.main?.tproxy_port || "7893";
+    document.getElementById('cfg-rdbypass').checked = cfg.main?.rdbypass  === "1";
+    document.getElementById('cfg-failover').checked = cfg.main?.failover  === "1";
+	document.getElementById('cfg-cron').value       = cfg.main?.cron || "0 4 * * 1"; // НОВОЕ
+    document.getElementById('cfg-dns').value        = cfg.main?.custom_dns || "https://dns.cloudflare.com/dns-query";
+    document.getElementById('cfg-local-dns').value  = cfg.main?.local_dns  || "tcp://77.88.8.8";
+
+    if (cfg.main?.clash_secret) {
+        clashSecret = cfg.main.clash_secret;
+        document.getElementById('dash-frame').src = `http://${location.hostname}:9090/ui/?hostname=${location.hostname}&port=9090&secret=${encodeURIComponent(clashSecret)}`;
+    }
+
+    let rHtml = '';
+    Object.entries(cfg.custom_rules || {}).forEach(([sec, r]) => {
+        if (!r.outbound) return; 
+        const badgeColor = r.outbound === 'proxy' ? 'color:var(--accent); background:rgba(37,99,235,0.1)' : 'color:var(--success); background:rgba(16,185,129,0.1)';
+        rHtml += `<tr><td>${esc(r.source) || 'Все (LAN)'}</td><td style="word-break:break-all">${esc(r.domain) || '—'}</td><td>${esc(r.ip) || '—'}</td>
+            <td><span style="padding:4px 8px; border-radius:4px; font-size:.8rem; font-weight:600; ${badgeColor}">${r.outbound.toUpperCase()}</span></td>
+            <td><button class="btn btn-danger" style="padding:4px 10px" onclick="deleteItem('${esc(sec)}', true)">×</button></td>`;
+    });
+    document.querySelector('#rules-table tbody').innerHTML = rHtml || '<tr><td colspan="5" style="color:#64748b; text-align:center;">Нет исключений. Работают системные правила.</td></tr>';
+
+    const subCounts = {};
+    (cfg.sub_nodes || []).forEach(n => { subCounts[n._subscription] = (subCounts[n._subscription] || 0) + 1; });
+    let subHtml = '';
+    Object.entries(cfg.subscriptions || {}).forEach(([sec, sub]) => {
+        subHtml += `<tr><td><b>${esc(sub.label)}</b></td><td style="color:#64748b;max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(sub.url)}</td>
+            <td>${subCounts[sec] || 0}</td><td><button class="btn btn-success" style="padding:4px 10px" onclick="syncSub('${esc(sec)}')">Синхро</button>
+            <button class="btn btn-danger" style="padding:4px 10px;margin-left:4px" onclick="deleteItem('${esc(sec)}')">Удалить</button></td></tr>`;
+    });
+    document.querySelector('#sub-table tbody').innerHTML = subHtml || '<tr><td colspan="4" style="color:#64748b">Нет подписок</td></tr>';
+
+    let nodeHtml = '';
+    Object.entries(cfg.nodes || {}).forEach(([sec, n]) => {
+        const isOff = n.enabled === "0";
+        nodeHtml += `<tr style="${isOff ? 'opacity:.45' : ''}">
+            <td>${esc(n.tag)}</td><td>${esc(n.type)}</td><td>${esc(n.server)}</td><td>${esc(n.server_port)}</td>
+            <td data-node-tag="${esc(n.tag)}">${latencyBadge(n.tag)}</td>
+            <td style="display:flex;gap:4px;flex-wrap:wrap">
+                <button class="btn btn-sm ${isOff ? 'toggle-off' : 'btn-success'} toggle-btn" onclick="toggleNode('${esc(sec)}','${isOff ? '1' : '0'}')">${isOff ? 'Вкл' : 'Выкл'}</button>
+                <button class="btn btn-sm" onclick="openEditModal('${esc(sec)}',${JSON.stringify(n).replace(/'/g,"&#39;")})">✎</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteItem('${esc(sec)}')">×</button>
+            </td></tr>`;
+    });
+    (cfg.sub_nodes || []).forEach(n => {
+        nodeHtml += `<tr><td>${esc(n.tag)} <span class="sub-badge">${esc(n._sub_label)}</span></td><td>${esc(n.type)}</td><td>${esc(n.server)}</td><td>${esc(n.server_port)}</td><td data-node-tag="${esc(n.tag)}">${latencyBadge(n.tag)}</td><td style="color:#475569">—</td></tr>`;
+    });
+    document.querySelector('#nodes-table tbody').innerHTML = nodeHtml || '<tr><td colspan="6" style="color:#64748b">Нет узлов</td></tr>';
+    updateStatus();
+}
+
+async function addUserRule() {
+    const source = document.getElementById('rule-source').value.trim(), domain = document.getElementById('rule-domain').value.trim(), ip = document.getElementById('rule-ip').value.trim();
+    if (!source && !domain && !ip) { alert("Укажите хотя бы одно условие."); return; }
+    const res = await ubusCall("singbox", "add_rule", { rule: { source, domain, ip, outbound: document.getElementById('rule-outbound').value } });
+    if (res.error) {
+        alert('Ошибка: ' + res.error);
+    } else {
+        document.getElementById('rule-source').value = '';
+        document.getElementById('rule-domain').value = '';
+        document.getElementById('rule-ip').value = '';
+        await ubusCall("singbox", "apply");
+        loadData();
+    }
+}
+
+async function saveSettings() {
+    const btn = document.getElementById('btn-apply'); btn.disabled = true; btn.textContent = 'Применяется...';
+    try {
+        await ubusCall("singbox", "set_settings", { settings: { enabled: document.getElementById('cfg-enabled').checked ? "1" : "0", tproxy_port: document.getElementById('cfg-port').value, rdbypass: document.getElementById('cfg-rdbypass').checked ? "1" : "0", failover: document.getElementById('cfg-failover').checked ? "1" : "0", cron: document.getElementById('cfg-cron').value, custom_dns: document.getElementById('cfg-dns').value, local_dns: document.getElementById('cfg-local-dns').value }});
+        const res = await ubusCall("singbox", "apply");
+        alert(res.error ? ('Ошибка: ' + (res.error)) : 'Успешно применено!');
+        loadData();
+    } finally { btn.disabled = false; btn.textContent = 'Применить конфигурацию'; }
+}
+
+async function addSubscription() {
+    const label = prompt('Имя подписки:'); if (!label) return;
+    const url = prompt('URL подписки:'); if (!url) return;
+    const res = await ubusCall("singbox", "add_subscription", { label, url });
+    if (!res.error) loadData(); else alert('Ошибка: ' + res.error);
+}
+
+async function syncSub(sec) {
+    await ubusCall("singbox", "update_sub", { section: sec });
+    let attempts = 0;
+    const poll = setInterval(async () => {
+        const s = await ubusCall("singbox", "status");
+        if (!s.sub_updating || ++attempts > 30) { clearInterval(poll); loadData(); }
+    }, 2000);
+}
+
+async function deleteItem(sec, isRule = false) {
+    if (!confirm('Удалить выбранный элемент?')) return;
+    
+    const method = isRule ? "del_rule" : "del_node";
+    const res = await ubusCall("singbox", method, { section: sec });
+    
+    if (res.error) {
+        alert('Ошибка удаления: ' + res.error);
+        return;
+    }
+    await ubusCall("singbox", "apply"); 
+    loadData();
+}
+
+// ── Универсальный Импорт: .vpn (JSON) & .conf (INI) ──
+async function importVpnFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    e.target.value = '';
+    
+    try {
+        let text = '';
+        const buffer = await file.arrayBuffer();
+        
+        // 1. Попытка декомпрессии Zlib (стандартный .vpn от Amnezia)
+        try {
+            const ds  = new DecompressionStream('deflate');
+            text = await new Response(new Blob([buffer]).stream().pipeThrough(ds)).text();
+        } catch {
+            text = new TextDecoder().decode(buffer);
+        }
+
+        let node = null;
+
+        // 2. Попытка парсинга JSON (.vpn формат)
+        try {
+            const data = JSON.parse(text);
+            let awg = null;
+            if (Array.isArray(data.containers)) {
+                awg = data.containers.find(c => ['amnezia-awg', 'amneziawg', 'awg'].includes(c.container));
+            } else if (data.containers) {
+                awg = data.containers.amneziawg || data.containers.awg;
+            }
+            if (!awg) throw new Error('Контейнер AmneziaWG не найден');
+
+            node = {
+                type: 'amneziawg', tag: 'Amnezia_' + (awg.awg_port || awg.port || 'AWG'),
+                server: data.last_config?.host || data.host || prompt('IP сервера не найден. Введите вручную:', ''),
+                server_port: String(awg.awg_port || awg.port || 443), private_key: awg.awg_private_key || awg.priv_key,
+                peer_public_key: awg.awg_public_key || awg.pub_key, local_address: awg.awg_ip || awg.client_ip || '10.8.0.2/32',
+                jc: String(awg.Jc || parseInt(awg.junkPacketCount) || 0),
+				jmin: String(awg.Jmin || parseInt(awg.junkPacketMinSize) || 0), jmax: String(awg.Jmax || parseInt(awg.junkPacketMaxSize) || 0),
+                s1: String(awg.S1 || parseInt(awg.initPacketJunkSize) || 0), s2: String(awg.S2 || parseInt(awg.responsePacketJunkSize) || 0),
+                h1: String(awg.H1 || parseInt(awg.initPacketMagicHeader) || 0), h2: String(awg.H2 || parseInt(awg.responsePacketMagicHeader) || 0),
+                h3: String(awg.H3 || parseInt(awg.underloadPacketMagicHeader) || 0), h4: String(awg.H4 || parseInt(awg.transportPacketMagicHeader) || 0)
+            };
+        } catch (jsonError) {
+            // 3. Если JSON упал, пробуем парсить как текстовый .conf (INI) формат WireGuard/AWG
+            if (text.includes('[Interface]') && text.includes('[Peer]')) {
+                const lines = text.split('\n');
+                let conf = {};
+                lines.forEach(l => {
+                    const match = l.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.+)$/);
+                    if (match) conf[match[1].toLowerCase()] = match[2].trim();
+                });
+                
+                const endpoint = conf.endpoint ? conf.endpoint.split(':') : [];
+                node = {
+                    type: 'amneziawg', tag: 'AWG_Conf_' + (endpoint[1] || '443'),
+                    server: endpoint[0] || prompt('IP сервера не найден. Введите:', ''),
+                    server_port: endpoint[1] || '443', private_key: conf.privatekey, peer_public_key: conf.publickey,
+                    local_address: conf.address || '10.8.0.2/32',
+                    jc: String(conf.jc || 0),
+					jmin: String(conf.jmin || 0), jmax: String(conf.jmax || 0),
+                    s1: String(conf.s1 || 0), s2: String(conf.s2 || 0), h1: String(conf.h1 || 0),
+                    h2: String(conf.h2 || 0), h3: String(conf.h3 || 0), h4: String(conf.h4 || 0)
+                };
+            } else {
+                throw new Error("Неподдерживаемый формат файла. Ожидается .vpn (JSON) или .conf (INI)");
+            }
+        }
+
+        if (!node || !node.server) throw new Error('IP сервера не указан');
+        if (!node.private_key) throw new Error('Приватный ключ не найден');
+
+        const res = await ubusCall("singbox", "add_node", { node });
+        if (res.error) throw new Error('Ошибка записи в роутер: ' + res.error);
+
+        alert('Профиль успешно импортирован!');
+        loadData();
+    } catch(err) {
+        alert('Ошибка импорта: ' + err.message);
+    }
+}
+
+// ── Смена системного пароля ──
+async function changeRouterPassword() {
+    const pwd = document.getElementById('new-password').value;
+    if (!pwd) { alert("Пароль не может быть пустым!"); return; }
+    if (!confirm("Вы уверены? Это изменит системный пароль роутера (root).")) return;
+    
+    const res = await ubusCall("singbox", "change_password", { password: pwd });
+    if (res.error) {
+        alert("Ошибка: " + res.error);
+    } else {
+        alert("Пароль успешно изменен! При следующем входе используйте новый пароль.");
+        document.getElementById('new-password').value = '';
+    }
+}
+
+// ── Парсер VLESS URI ──
+async function importVlessUri() {
+    const uri = prompt("Вставьте VLESS ссылку (vless://...):");
+    if (!uri) return;
+    if (!uri.startsWith("vless://")) { alert("Поддерживаются только ссылки vless://"); return; }
+
+    try {
+        const url = new URL(uri);
+        const params = new URLSearchParams(url.search);
+        
+        const node = {
+            type: "vless",
+            tag: decodeURIComponent(url.hash.substring(1)) || `VLESS_${url.hostname}`,
+            server: url.hostname,
+            server_port: url.port || "443",
+            uuid: url.username,
+            security: params.get("security") || "none",
+            sni: params.get("sni") || "",
+            pbk: params.get("pbk") || "",
+            sid: params.get("sid") || "",
+            transport: params.get("type") || "none",
+            path: params.get("path") ? decodeURIComponent(params.get("path")) : "",
+            thost: params.get("host") ? decodeURIComponent(params.get("host")) : "",
+            mode: params.get("mode") || ""
+        };
+
+        if (!node.server || !node.uuid) throw new Error("Неверный формат ссылки (нет IP или UUID)");
+
+        const res = await ubusCall("singbox", "add_node", { node });
+        if (res.error) throw new Error(res.error);
+        
+        alert("VLESS узел успешно добавлен!");
+        loadData();
+    } catch (e) {
+        alert("Ошибка парсинга ссылки: " + e.message);
+    }
+}
+</script>
+<div id="edit-modal" class="modal-overlay" style="display:none">
+    <div class="modal">
+        <h3>Редактировать узел</h3>
+        <input type="hidden" id="edit-section">
+        <input type="hidden" id="edit-type">
+        <div class="form-group"><label>Тег</label><input type="text" id="edit-tag"></div>
+        <div class="form-group"><label>Сервер</label><input type="text" id="edit-server"></div>
+        <div class="form-group"><label>Порт</label><input type="text" id="edit-port"></div>
+        <div id="edit-vless-fields">
+            <div class="form-group"><label>UUID</label><input type="text" id="edit-uuid"></div>
+            <div class="form-group"><label>Security</label>
+                <select id="edit-security"><option value="none">none</option><option value="tls">tls</option><option value="reality">reality</option></select>
+            </div>
+            <div class="form-group"><label>SNI</label><input type="text" id="edit-sni"></div>
+            <div class="form-group"><label>Transport</label>
+                <select id="edit-transport"><option value="none">none</option><option value="ws">ws</option><option value="grpc">grpc</option><option value="xhttp">xhttp</option></select>
+            </div>
+            <div class="form-group"><label>Path</label><input type="text" id="edit-path"></div>
+        </div>
+		<div id="edit-awg-fields">
+            <div class="form-group"><label>Private Key</label><input type="text" id="edit-privkey"></div>
+            <div class="form-group"><label>Peer Public Key</label><input type="text" id="edit-pubkey"></div>
+            <div class="form-group"><label>Local Address</label><input type="text" id="edit-localaddr"></div>
+            <div id="edit-amnezia-params" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                <div class="form-group"><label>jc</label><input type="text" id="edit-jc"></div>
+                <div class="form-group"><label>jmin</label><input type="text" id="edit-jmin"></div>
+                <div class="form-group"><label>jmax</label><input type="text" id="edit-jmax"></div>
+                <div class="form-group"><label>s1</label><input type="text" id="edit-s1"></div>
+                <div class="form-group"><label>s2</label><input type="text" id="edit-s2"></div>
+                <div class="form-group"><label>h1</label><input type="text" id="edit-h1"></div>
+                <div class="form-group"><label>h2</label><input type="text" id="edit-h2"></div>
+                <div class="form-group"><label>h3</label><input type="text" id="edit-h3"></div>
+                <div class="form-group"><label>h4</label><input type="text" id="edit-h4"></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" style="background:var(--border)" onclick="closeEditModal()">Отмена</button>
+            <button class="btn btn-success" onclick="saveEditNode()">Сохранить</button>
+        </div>
+    </div>
+</div>
+</body>
+</html>
