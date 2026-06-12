@@ -49,7 +49,7 @@ esac
 
 log "Detected architecture: ${UNAME_M} -> Target build: ${ARCH}"
 
-SB_REPO="shtorm-7/sing-box-extended"   # TODO: replace with your mirror repo
+SB_REPO="infinjest/singA"   # replaced with mirror repo
 SING_BOX_DIR="/etc/sing-box"
 SUB_CACHE_DIR="/etc/sing-box/sub_cache"
 RPCD_DIR="/usr/libexec/rpcd"
