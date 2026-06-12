@@ -1,0 +1,63 @@
+name: Mirror sing-box-extended releases
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # Проверка каждые 6 часов
+  workflow_dispatch:        # Возможность ручного запуска кнопкой
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # Критично: дает права на создание релизов
+    steps:
+      - name: Get latest upstream release
+        id: upstream
+        run: |
+          RELEASE=$(curl -s https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest)
+          TAG=$(echo "$RELEASE" | jq -r .tag_name)
+          BODY=$(echo "$RELEASE" | jq -r .body | head -c 500)
+          
+          # Безопасная запись многострочного текста в GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Check if already mirrored
+        id: check
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ steps.upstream.outputs.tag }})
+          if [ "$STATUS" = "200" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download assets
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          TAG="${{ steps.upstream.outputs.tag }}"
+          for ARCH in linux-arm64 linux-amd64 linux-armv7; do
+            # Внимание: убедись, что маска замены совпадает с реальными именами файлов у shtorm-7
+            # Если тег выглядит как 'v1.18.0-extended', то ${TAG/-extended/} превратит его в 'v1.18.0'
+            CLEAN_TAG="${TAG/-extended/}"
+            ASSET="sing-box-${CLEAN_TAG#v}-${ARCH}-compressed.tar.gz"
+            
+            echo "Downloading upstream asset: ${ASSET} for tag ${TAG}"
+            curl -sL "https://github.com/shtorm-7/sing-box-extended/releases/download/${TAG}/${ASSET}" \
+              -o "${ASSET}" || true
+          done
+
+      - name: Create mirrored release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.upstream.outputs.tag }}
+          name: "sing-box-extended ${{ steps.upstream.outputs.tag }}"
+          body: |
+            Automated mirror of shtorm-7/sing-box-extended ${{ steps.upstream.outputs.tag }}
+            
+            ${{ steps.upstream.outputs.body }}
+          files: "*.tar.gz"
