@@ -46,6 +46,7 @@ deploy_utility() {
     else
         log "       Файл ${file_name} не найден локально. Скачиваю с GitHub..."
         if [ "$DRY_RUN" != "1" ]; then
+			mkdir -p "$(dirname "$system_path")"
             curl -sL --max-time 15 "${RAW_BASE}/${file_name}" -o "$system_path" || die "Не удалось скачать ${file_name}"
             chmod "$mode" "$system_path"
         else
