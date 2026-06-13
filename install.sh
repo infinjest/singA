@@ -47,7 +47,7 @@ deploy_utility() {
         log "       Файл ${file_name} не найден локально. Скачиваю с GitHub..."
         if [ "$DRY_RUN" != "1" ]; then
             curl -sL --max-time 15 "${RAW_BASE}/${file_name}" -o "$system_path" || die "Не удалось скачать ${file_name}"
-            chmod +x "$system_path"
+            chmod "$mode" "$system_path"
         else
             echo "        ~ curl -sL ${RAW_BASE}/${file_name} -o $system_path"
         fi
@@ -165,12 +165,12 @@ ok "Directories ready (sub_cache → RAM, SRS → Flash)"
 
 # ── 4. Install project files from src/ ───────────────────────────────────────
 log "[4/8] Installing project files and automation tools..."
-inst 755 "${SRC}/rpcd--singbox.lua"            "${RPCD_DIR}/singbox"
-inst 755 "${SRC}/sbin--singbox-compiler.lua"   "/usr/sbin/singbox-compiler"
-inst 755 "${SRC}/sbin--singbox-sub-updater.sh" "/usr/sbin/singbox-sub-updater"
-inst 755 "${SRC}/initd--sing-box.sh"           "/etc/init.d/sing-box"
-inst 755 "${SRC}/etc-singbox--update-rules.sh" "${SING_BOX_DIR}/update-rules.sh"
-inst 644 "${SRC}/www--singbox.html"            "${WWW_DIR}/singbox.html"
+deploy_utility "src/rpcd--singbox.lua"            "${RPCD_DIR}/singbox"            "755"
+deploy_utility "src/sbin--singbox-compiler.lua"   "/usr/sbin/singbox-compiler"     "755"
+deploy_utility "src/sbin--singbox-sub-updater.sh" "/usr/sbin/singbox-sub-updater"  "755"
+deploy_utility "src/initd--sing-box.sh"           "/etc/init.d/sing-box"           "755"
+deploy_utility "src/etc-singbox--update-rules.sh" "${SING_BOX_DIR}/update-rules.sh" "755"
+deploy_utility "src/www--singbox.html"            "${WWW_DIR}/singbox.html"
 
 # Новая логика деплоя сервисных утилит
 deploy_utility "test.sh" "/usr/sbin/test.sh" "755"
