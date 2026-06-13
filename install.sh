@@ -28,11 +28,11 @@ run() {
 }
 
 inst() {
-    # inst <mode> <src> <dst>
     if [ "$DRY_RUN" = "1" ]; then
         echo "        ~ install -m $1 $2 → $3"
     else
-        install -m "$1" "$2" "$3"
+        cp "$2" "$3"
+        chmod "$1" "$3"
     fi
 }
 
@@ -138,7 +138,8 @@ run "tar -xzf /tmp/sb.tar.gz -C /tmp/ 2>/dev/null"
 if [ "$DRY_RUN" != "1" ]; then
     SB_BIN=$(find /tmp -name "sing-box" -type f 2>/dev/null | head -1)
     [ -n "$SB_BIN" ] || die "sing-box binary not found in archive"
-    install -m 755 "$SB_BIN" /usr/bin/sing-box
+    cp "$SB_BIN" /usr/bin/sing-box
+    chmod 755 /usr/bin/sing-box
     rm -rf /tmp/sb.tar.gz /tmp/sing-box-*/
     ok "$(/usr/bin/sing-box version 2>/dev/null | head -1)"
 else
