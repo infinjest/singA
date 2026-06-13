@@ -47,7 +47,8 @@ deploy_utility() {
         log "       Файл ${file_name} не найден локально. Скачиваю с GitHub..."
         if [ "$DRY_RUN" != "1" ]; then
 			mkdir -p "$(dirname "$system_path")"
-            curl -sL --max-time 15 "${RAW_BASE}/${file_name}" -o "$system_path" || die "Не удалось скачать ${file_name}"
+            #curl -sL --max-time 15 "${RAW_BASE}/${file_name}" -o "$system_path" || die "Не удалось скачать ${file_name}"
+			curl -v --max-time 15 "${RAW_BASE}/${file_name}" -o "$system_path" 2>/tmp/curl_debug.txt; echo "curl exit: $?"; cat /tmp/curl_debug.txt
             chmod "$mode" "$system_path"
         else
             echo "        ~ curl -sL ${RAW_BASE}/${file_name} -o $system_path"
