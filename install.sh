@@ -130,7 +130,8 @@ if [ "$DRY_RUN" != "1" ]; then
     [ -n "$AVAIL_KB" ] && log "       Свободно в /overlay: ${AVAIL_KB} KB — OK"
 fi
 
-TARBALL_URL="https://github.com/${SB_REPO}/releases/download/${LATEST}/sing-box-${LATEST#v}-${ARCH}-compressed.tar.gz"
+ASSET_VER=$(echo "${LATEST#v}" | sed 's/-extended//')
+TARBALL_URL="https://github.com/${SB_REPO}/releases/download/${LATEST}/sing-box-${ASSET_VER}-${ARCH}-compressed.tar.gz"
 run "curl -sL --max-time 120 '${TARBALL_URL}' -o /tmp/sb.tar.gz" || die "Download failed"
 run "tar -xzf /tmp/sb.tar.gz -C /tmp/ 2>/dev/null"
 
