@@ -3,3 +3,4 @@
 *.lua text eol=lf
 *.html text eol=lf
 *.json text eol=lf
+*.yml text eol=lf

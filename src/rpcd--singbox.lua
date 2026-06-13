@@ -187,15 +187,21 @@ elseif action == "set_settings" then
     respond({ status = "ok" })
 
 elseif action == "change_password" then
-    if type(req.password) ~= "string" or req.password == "" then 
-        respond({ error = "Пароль не может быть пустым" }) 
-    end
-    -- Устранение уязвимости Newline Injection
-    local safe_pass = req.password:gsub("[\n\r]", ""):gsub("'", "'\\''")
-    local cmd = "echo 'root:" .. safe_pass .. "' | chpasswd 2>/dev/null"
-    local res = os.execute(cmd)
-    
-    if res == 0 or res == true then respond({ status = "ok" }) else respond({ error = "Ошибка при смене пароля" }) end
+	if type(req.password) ~= "string" or req.password == "" then 
+		respond({ error = "Пароль не может быть пустым" }) 
+	end
+	-- Устранение уязвимости Newline Injection и экранирование кавычек
+	local safe_pass = req.password:gsub("[\n\r]", ""):gsub("'", "'\\''")
+	
+	-- [ ПАТЧ ]: Замена echo на printf для защиты от инъекции управляющих флагов (-e, -n)
+	local cmd = "printf 'root:%s\\n' '" .. safe_pass .. "' | chpasswd 2>/dev/null"
+	
+	local res = os.execute(cmd)
+	if res == 0 or res == true then 
+		respond({ status = "ok" }) 
+	else 
+		respond({ error = "Ошибка при смене пароля" }) 
+	end
 
 elseif action == "update_sub" then
     local sec = ""

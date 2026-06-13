@@ -101,7 +101,7 @@ fi
 # ── 3. UCI config ─────────────────────────────────────────────────────────────
 section "UCI config"
 
-for key in enabled tproxy_port rdbypass failover custom_dns; do
+for key in enabled tproxy_port rdbypass failover custom_dns local_dns; do
     VAL=$(uci -q get singbox.main.$key)
     if [ -n "$VAL" ]; then
         ok "singbox.main.$key = $VAL"

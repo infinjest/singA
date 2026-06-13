@@ -1,0 +1,64 @@
+name: Bug report
+description: Что-то работает не так
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Заполните шаблон — это ускоряет диагностику в разы.
+
+  - type: input
+    id: device
+    attributes:
+      label: Устройство
+      placeholder: "Netis NX31 / Xiaomi AX3000T / ..."
+    validations:
+      required: true
+
+  - type: input
+    id: openwrt
+    attributes:
+      label: Версия OpenWrt
+      placeholder: "OpenWrt 23.05.3 / snapshot r25xxx"
+    validations:
+      required: true
+
+  - type: input
+    id: singa_version
+    attributes:
+      label: Версия singA
+      placeholder: "v0.9.9 — из /usr/bin/sing-box version или шапки UI"
+    validations:
+      required: true
+
+  - type: textarea
+    id: free_m
+    attributes:
+      label: Память (free -m)
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Описание проблемы
+      description: Что происходит, что ожидалось
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Шаги воспроизведения
+      placeholder: |
+        1. Добавить подписку ...
+        2. Нажать Apply
+        3. Видим ...
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи
+      description: "`logread | grep sing-box` и/или вывод `test.sh`"
+      render: shell
