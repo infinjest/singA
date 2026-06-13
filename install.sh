@@ -8,6 +8,12 @@ set -e
 DRY_RUN=0
 [ "$1" = "--dry-run" ] && DRY_RUN=1
 
+# ── НАСТРОЙКА РЕПОЗИТОРИЯ ДЛЯ АВТОСКАЧИВАНИЯ УТИЛИТ ───────────────────────────
+GITHUB_USER="infinjest"  # Укажите ваш логин на GitHub
+REPO_NAME="singA"                    # Имя вашего репозитория
+BRANCH="main"
+RAW_BASE="https://raw.githubusercontent.com/${GITHUB_USER}/${REPO_NAME}/${BRANCH}"
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 log() { echo "[singA] $*"; }
 ok()  { echo "        ✓ $*"; }
@@ -27,6 +33,24 @@ inst() {
         echo "        ~ install -m $1 $2 → $3"
     else
         install -m "$1" "$2" "$3"
+    fi
+}
+
+# Функция гибкого деплоя: приоритет локальным файлам, фолбек на скачивание с GitHub
+deploy_utility() {
+    local file_name="$1" system_path="$2" mode="$3"
+    if [ -f "${SCRIPT_DIR}/${file_name}" ]; then
+        inst "$mode" "${SCRIPT_DIR}/${file_name}" "$system_path"
+    elif [ -f "${SRC}/${file_name}" ]; then
+        inst "$mode" "${SRC}/${file_name}" "$system_path"
+    else
+        log "       Файл ${file_name} не найден локально. Скачиваю с GitHub..."
+        if [ "$DRY_RUN" != "1" ]; then
+            curl -sL --max-time 15 "${RAW_BASE}/${file_name}" -o "$system_path" || die "Не удалось скачать ${file_name}"
+            chmod +x "$system_path"
+        else
+            echo "        ~ curl -sL ${RAW_BASE}/${file_name} -o $system_path"
+        fi
     fi
 }
 
@@ -51,7 +75,6 @@ log "Detected architecture: ${UNAME_M} -> Target build: ${ARCH}"
 
 SB_REPO="infinjest/singA"   # replaced with mirror repo
 SING_BOX_DIR="/etc/sing-box"
-SUB_CACHE_DIR="/etc/sing-box/sub_cache"
 RPCD_DIR="/usr/libexec/rpcd"
 ACL_DIR="/usr/share/rpcd/acl.d"
 WWW_DIR="/www/singbox"
@@ -98,6 +121,15 @@ LATEST=$(curl -sL --max-time 15 \
 [ -n "$LATEST" ] || die "Cannot reach GitHub API — check internet connection"
 log "       Version: ${LATEST}"
 
+# Проверка свободного места в /overlay перед скачиванием (~30 MB минимум под бинарник)
+if [ "$DRY_RUN" != "1" ]; then
+    AVAIL_KB=$(df /overlay 2>/dev/null | awk 'NR==2{print $4}')
+    if [ -n "$AVAIL_KB" ] && [ "$AVAIL_KB" -lt 30720 ]; then
+        die "Недостаточно места в /overlay: ${AVAIL_KB} KB доступно, требуется минимум 30 MB. Освободите место и повторите."
+    fi
+    [ -n "$AVAIL_KB" ] && log "       Свободно в /overlay: ${AVAIL_KB} KB — OK"
+fi
+
 TARBALL_URL="https://github.com/${SB_REPO}/releases/download/${LATEST}/sing-box-${LATEST#v}-${ARCH}-compressed.tar.gz"
 run "curl -sL --max-time 120 '${TARBALL_URL}' -o /tmp/sb.tar.gz" || die "Download failed"
 run "tar -xzf /tmp/sb.tar.gz -C /tmp/ 2>/dev/null"
@@ -113,19 +145,35 @@ else
 fi
 
 # ── 3. Create directory tree ──────────────────────────────────────────────────
+# Симлинк sub_cache → /var/run/ (tmpfs): сам симлинк хранится на Flash (маленький),
+# цель создаётся initd при каждом старте sing-box — Flash от записей кэша не изнашивается.
+# Директории /var/run/sing-box/* НЕ создаём здесь — это делает initd в start_service().
+# SRS-базы РКН остаются в /etc/sing-box/ напрямую: перезапись раз в неделю, износ пренебрежим.
 log "[3/8] Creating directories..."
-run "mkdir -p ${SING_BOX_DIR} ${SUB_CACHE_DIR} ${WWW_DIR}"
-ok "${SING_BOX_DIR}, ${SUB_CACHE_DIR}, ${WWW_DIR}"
+run "mkdir -p ${SING_BOX_DIR} ${WWW_DIR}"
+
+# rm -rf перед ln -sf: без этого при переустановке ln создаст симлинк ВНУТРИ существующей папки
+if [ "$DRY_RUN" != "1" ]; then
+    rm -rf "${SING_BOX_DIR}/sub_cache"
+    ln -sf /var/run/sing-box/sub_cache "${SING_BOX_DIR}/sub_cache"
+else
+    echo "        ~ rm -rf ${SING_BOX_DIR}/sub_cache && ln -sf /var/run/sing-box/sub_cache ${SING_BOX_DIR}/sub_cache"
+fi
+ok "Directories ready (sub_cache → RAM, SRS → Flash)"
 
 # ── 4. Install project files from src/ ───────────────────────────────────────
-log "[4/8] Installing project files..."
+log "[4/8] Installing project files and automation tools..."
 inst 755 "${SRC}/rpcd--singbox.lua"            "${RPCD_DIR}/singbox"
 inst 755 "${SRC}/sbin--singbox-compiler.lua"   "/usr/sbin/singbox-compiler"
 inst 755 "${SRC}/sbin--singbox-sub-updater.sh" "/usr/sbin/singbox-sub-updater"
 inst 755 "${SRC}/initd--sing-box.sh"           "/etc/init.d/sing-box"
 inst 755 "${SRC}/etc-singbox--update-rules.sh" "${SING_BOX_DIR}/update-rules.sh"
 inst 644 "${SRC}/www--singbox.html"            "${WWW_DIR}/singbox.html"
-ok "6 files installed"
+
+# Новая логика деплоя сервисных утилит
+deploy_utility "test.sh" "/usr/sbin/test.sh" "755"
+deploy_utility "uninstall.sh" "/usr/sbin/singbox-uninstall" "755"
+ok "Core files and automation utilities installed successfully"
 
 # ── 5. Write RPcd ACL (inlined) ───────────────────────────────────────────────
 log "[5/8] Writing RPcd ACL..."
@@ -200,9 +248,9 @@ fi
 # ── 8. Blocklists, services, cron ─────────────────────────────────────────────
 log "[8/8] Final setup..."
 
-# Blocklists — non-fatal if no internet yet
+# Blocklists — скачивание пойдет уже напрямую в ОЗУ через созданную ссылку
 if [ "$DRY_RUN" != "1" ]; then
-    "${SING_BOX_DIR}/update-rules.sh" && ok "Blocklists downloaded" \
+    "${SING_BOX_DIR}/update-rules.sh" && ok "Blocklists downloaded to RAM" \
         || echo "        WARNING: blocklist download failed — run update-rules.sh manually later"
 else
     echo "        ~ ${SING_BOX_DIR}/update-rules.sh"
@@ -240,9 +288,10 @@ if [ "$DRY_RUN" = "1" ]; then
 echo "  Dry-run complete — no changes were made"
 else
 echo "  singA installed successfully"
-echo "  → http://${LAN_IP}:${UI_PORT}"
-echo "  1. Add nodes or subscriptions"
-echo "  2. Enable TProxy"
-echo "  3. Press Apply"
+echo "  → http://${LAN_IP}:${UI_PORT}/singbox.html"
+echo ""
+echo "  Полезные команды:"
+echo "  Запуск интеграционных тестов:  sh /usr/sbin/test.sh"
+echo "  Полное, бесследное удаление:   sh /usr/sbin/singbox-uninstall"
 fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -57,9 +57,12 @@ sb.inbounds[1].listen_port = tproxy_port
 local rdbypass   = uci:get("singbox", "main", "rdbypass")   or "0"
 local failover   = uci:get("singbox", "main", "failover")   or "0"
 local custom_dns = uci:get("singbox", "main", "custom_dns") or "https://dns.cloudflare.com/dns-query"
+local local_dns  = uci:get("singbox", "main", "local_dns")  or "tcp://77.88.8.8"
 
-table.insert(sb.dns.servers, { tag = "dns-remote", address = custom_dns, detour = "proxy" })
-local local_dns = uci:get("singbox", "main", "local_dns") or "tcp://77.88.8.8"
+-- [ ПАТЧ 1 ]: Добавляем address_resolver="dns-local" в remote-сервер.
+-- Это заставит ядро резолвить домен (например dns.cloudflare.com) через 
+-- локальный IP (77.88.8.8), предотвращая мертвую петлю при перехвате DNS.
+table.insert(sb.dns.servers, { tag = "dns-remote", address = custom_dns, detour = "proxy", address_resolver = "dns-local" })
 table.insert(sb.dns.servers, { tag = "dns-local", address = local_dns, detour = "direct" })
 
 local function build_outbound(s, tag)
@@ -255,12 +258,28 @@ end)
 
 -- Priority 3: geo-blocked lists
 if rdbypass == "1" then
-    sb.route.rule_set = {
-        { tag = "geosite-blocked", type = "local", format = "binary", path = "/etc/sing-box/ru-blocked.srs" },
-        { tag = "geoip-blocked",   type = "local", format = "binary", path = "/etc/sing-box/geoip-ru-blocked.srs" }
-    }
-    table.insert(rt_geo,  { rule_set = { "geosite-blocked", "geoip-blocked" }, outbound = "proxy" })
-    table.insert(dns_geo, { rule_set = { "geosite-blocked" }, server = "dns-remote" })
+    -- [ ПАТЧ 2 ]: Безопасная проверка физического наличия баз. 
+    -- Если файлов нет (еще не скачались), компилятор не добавит их в конфиг, спасая sing-box от краха.
+    local ru_path = "/etc/sing-box/ru-blocked.srs"
+    local geoip_path = "/etc/sing-box/geoip-ru-blocked.srs"
+    
+    local f_ru = io.open(ru_path, "r")
+    local f_geo = io.open(geoip_path, "r")
+    
+    if f_ru and f_geo then
+        f_ru:close()
+        f_geo:close()
+        sb.route.rule_set = {
+            { tag = "geosite-blocked", type = "local", format = "binary", path = ru_path },
+            { tag = "geoip-blocked",   type = "local", format = "binary", path = geoip_path }
+        }
+        table.insert(rt_geo,  { rule_set = { "geosite-blocked", "geoip-blocked" }, outbound = "proxy" })
+        table.insert(dns_geo, { rule_set = { "geosite-blocked" }, server = "dns-remote" })
+    else
+        if f_ru then f_ru:close() end
+        if f_geo then f_geo:close() end
+        os.execute("logger -t singbox-compiler 'WARNING: SRS files missing. RDBypass rules skipped.'")
+    end
 end
 
 sb.route.rules = { { protocol = "dns", outbound = "dns-out" } }

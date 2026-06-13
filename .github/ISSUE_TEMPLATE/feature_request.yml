@@ -1,0 +1,38 @@
+name: Feature request
+description: Предложить улучшение или новую функцию
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Проблема / контекст
+      description: Что сейчас неудобно или невозможно?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Предлагаемое решение
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы
+      description: Что пробовали в качестве workaround?
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Компонент
+      options:
+        - Web UI (SPA)
+        - RPCD / UCI API
+        - Compiler (UCI → JSON)
+        - Sub-updater (подписки)
+        - Init.d / nftables
+        - Install / Uninstall
+        - CI / Mirror workflow
+        - Другое

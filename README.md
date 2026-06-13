@@ -1,5 +1,9 @@
 # singA
 
+```sh
+sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install.sh)"
+```
+
 Лёгкий прозрачный шлюз (TProxy) для роутеров OpenWrt на базе [sing-box](https://github.com/SagerNet/sing-box), управляемый через нативный стек UCI/UBUS.
 
 ---
@@ -69,6 +73,13 @@ sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install
 ```
 
 Установщик разворачивает все компоненты, создаёт UCI-конфиг с дефолтами и регистрирует сервис в procd. Существующая конфигурация не перезаписывается.
+
+После установки:
+
+```sh
+sh /usr/sbin/test.sh          # интеграционные тесты
+sh /usr/sbin/singbox-uninstall  # полное удаление
+```
 
 ---
 
