@@ -40,14 +40,15 @@ jobs:
         run: |
           TAG="${{ steps.upstream.outputs.tag }}"
           for ARCH in linux-arm64 linux-amd64 linux-armv7; do
-            # Внимание: убедись, что маска замены совпадает с реальными именами файлов у shtorm-7
-            # Если тег выглядит как 'v1.18.0-extended', то ${TAG/-extended/} превратит его в 'v1.18.0'
-            CLEAN_TAG="${TAG/-extended/}"
-            ASSET="sing-box-${CLEAN_TAG#v}-${ARCH}-compressed.tar.gz"
+            # Убираем манипуляции с CLEAN_TAG, используем TAG напрямую
+            # чтобы имя файла в точности соответствовало оригиналу:
+            # sing-box-1.13.12-extended-2.4.1-linux-arm64-compressed.tar.gz
+            ASSET="sing-box-${TAG#v}-${ARCH}-compressed.tar.gz"
             
-            echo "Downloading upstream asset: ${ASSET} for tag ${TAG}"
-            curl -sL "https://github.com/shtorm-7/sing-box-extended/releases/download/${TAG}/${ASSET}" \
-              -o "${ASSET}" || true
+            echo "Downloading upstream asset: ${ASSET}"
+            # Добавляем -f (fail), чтобы не сохранять 404 страницы!
+            curl -sfL "https://github.com/shtorm-7/sing-box-extended/releases/download/${TAG}/${ASSET}" \
+              -o "${ASSET}"
           done
 
       - name: Create mirrored release
