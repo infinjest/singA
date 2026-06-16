@@ -4,6 +4,37 @@
 
 ---
 
+## [0.10.0] — 2026-06-ХХ
+
+> **Breaking:** требует sing-box-extended ≥ 1.13.0
+
+### Fixed
+- `compiler`: убраны deprecated-поля `sniff`/`sniff_override_destination` из inbound (удалены в 1.13), action = "sniff" добавлен в route.rules
+- `compiler`: убран outbound `dns-out` (удалён в 1.13); DNS-перехват переведён на `action = "hijack-dns"`
+- `compiler`: `log.level = "disabled"` → `"info"` (значение "disabled" удалено в 1.13)
+- `compiler`: добавлен `x_padding_bytes = "100-1000"` для xhttp-транспорта (обязательно в 1.13)
+- `initd`: `procd_set_param env` — объединены три ENABLE_DEPRECATED_* в один вызов (множественные вызовы перезатирают друг друга в procd)
+- `install`: debug-вывод curl убран, восстановлен `curl -sL ... || die`
+- `install`: добавлен `touch /etc/config/singbox` перед `uci batch` (без файла UCI возвращает "Entry not found")
+- `install`: `uhttpd.singbox.ubus_prefix='/ubus'` — без этого SPA получала 404 на `/ubus`
+- `install`: `LAN_IP` — добавлен `cut -d/ -f1` (uci возвращал адрес с маской)
+- `update-rules.sh`: полностью переписан — upstream прекратил публикацию `.srs` напрямую; теперь скачивается `sing-box.zip` из `runetfreedom/russia-v2ray-rules-dat`, нужные файлы извлекаются через `unzip`
+
+### Added
+- `install`: зависимости `kmod-nft-socket lua luac libuci-lua libubus-lua unzip` (без них проект не функционировал на apk-сборках)
+- `test`: проверка `kmod-nft-socket`
+- `src/www--singbox.html`: фикс импорта `.vpn` — поддержка base64url + deflate/deflate-raw (формат AmneziaVPN)
+- `uninstall`: добавлен опциональный блок удаления пакетов, установленных singA (`lua`, `luac`, `libuci-lua`, `libubus-lua`, `unzip`, `kmod-nft-socket`)
+
+### Changed
+- `README`: таблица оборудования — убрана, добавлена информация о целевом железе и ПО
+- `README`: исправлена неверная формулировка про tmpfs-хранение баз РКН
+- `README`: добавлен источник правил (`runetfreedom/russia-v2ray-rules-dat`) в таблицу стека
+- `README`: секция "Отличие от podkop" — убраны недоказуемые claims (ТСПУ-эвристика, "Полная совместимость")
+- `README`: добавлены `<details>`-блоки с архитектурой и структурой файлов
+
+---
+
 ## [0.9.10] — 2026-06-13
 
 ### Fixed

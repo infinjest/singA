@@ -206,6 +206,12 @@ else
     fail "kmod-nft-tproxy NOT loaded"
 fi
 
+if lsmod 2>/dev/null | grep -q nft_socket; then
+    ok "kmod-nft-socket loaded"
+else
+    fail "kmod-nft-socket NOT loaded"
+fi
+
 # sing-box not running yet — nftables table should not exist
 if ! nft list table inet singbox >/dev/null 2>&1; then
     ok "nftables table absent (sing-box not started — expected)"
