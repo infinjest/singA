@@ -1,6 +1,6 @@
 #!/bin/sh
 # singA — Transparent Proxy Gateway Installer
-# Supports: OpenWrt 23.x+, MT7981/arm64 (Netis NX31, Xiaomi AX3000T, etc.), x86_64 Docker
+# Supports: OpenWrt snapshot (apk-based), MT7981/arm64 (Netis NX31, Xiaomi AX3000T, etc.)
 # Usage:    sh install.sh [--dry-run]
 
 set -e
@@ -9,8 +9,8 @@ DRY_RUN=0
 [ "$1" = "--dry-run" ] && DRY_RUN=1
 
 # ── НАСТРОЙКА РЕПОЗИТОРИЯ ДЛЯ АВТОСКАЧИВАНИЯ УТИЛИТ ───────────────────────────
-GITHUB_USER="infinjest"  # Укажите ваш логин на GitHub
-REPO_NAME="singA"                    # Имя вашего репозитория
+GITHUB_USER="infinjest"
+REPO_NAME="singA"
 BRANCH="main"
 RAW_BASE="https://raw.githubusercontent.com/${GITHUB_USER}/${REPO_NAME}/${BRANCH}"
 
@@ -46,9 +46,8 @@ deploy_utility() {
     else
         log "       Файл ${file_name} не найден локально. Скачиваю с GitHub..."
         if [ "$DRY_RUN" != "1" ]; then
-			mkdir -p "$(dirname "$system_path")"
-            #curl -sL --max-time 15 "${RAW_BASE}/${file_name}" -o "$system_path" || die "Не удалось скачать ${file_name}"
-			curl -v --max-time 15 "${RAW_BASE}/${file_name}" -o "$system_path" 2>/tmp/curl_debug.txt; echo "curl exit: $?"; cat /tmp/curl_debug.txt
+            mkdir -p "$(dirname "$system_path")"
+            curl -sL --max-time 15 "${RAW_BASE}/${file_name}" -o "$system_path" || die "Не удалось скачать ${file_name}"
             chmod "$mode" "$system_path"
         else
             echo "        ~ curl -sL ${RAW_BASE}/${file_name} -o $system_path"
@@ -59,23 +58,15 @@ deploy_utility() {
 # ── Configuration & Arch Detection ────────────────────────────────────────────
 UNAME_M=$(uname -m)
 case "$UNAME_M" in
-    x86_64)
-        ARCH="linux-amd64"
-        ;;
-    aarch64|arm64)
-        ARCH="linux-arm64"
-        ;;
-    armv7l|armv8l)
-        ARCH="linux-armv7"
-        ;;
-    *)
-        die "Unsupported architecture detected: $UNAME_M"
-        ;;
+    x86_64)   ARCH="linux-amd64"  ;;
+    aarch64|arm64) ARCH="linux-arm64" ;;
+    armv7l|armv8l) ARCH="linux-armv7" ;;
+    *) die "Unsupported architecture detected: $UNAME_M" ;;
 esac
 
 log "Detected architecture: ${UNAME_M} -> Target build: ${ARCH}"
 
-SB_REPO="infinjest/singA"   # replaced with mirror repo
+SB_REPO="infinjest/singA"
 SING_BOX_DIR="/etc/sing-box"
 RPCD_DIR="/usr/libexec/rpcd"
 ACL_DIR="/usr/share/rpcd/acl.d"
@@ -87,7 +78,7 @@ SRC="${SCRIPT_DIR}/src"
 
 # ── 1. Dependencies (apk vs opkg) ─────────────────────────────────────────────
 log "[1/8] Checking dependencies..."
-PKGS="curl ca-bundle kmod-nft-tproxy luci-lib-jsonc rpcd-mod-rpcsys uhttpd openssl-util coreutils-base64 iproute2-ss"
+PKGS="curl ca-bundle kmod-nft-tproxy kmod-nft-socket lua luac libuci-lua libubus-lua unzip luci-lib-jsonc rpcd-mod-rpcsys uhttpd openssl-util coreutils-base64 iproute2-ss"
 
 if command -v apk >/dev/null 2>&1; then
     log "       Detected 'apk' package manager (OpenWrt snapshot / Alpine Linux)"
@@ -123,7 +114,6 @@ LATEST=$(curl -sL --max-time 15 \
 [ -n "$LATEST" ] || die "Cannot reach GitHub API — check internet connection"
 log "       Version: ${LATEST}"
 
-# Проверка свободного места в /overlay перед скачиванием (~30 MB минимум под бинарник)
 if [ "$DRY_RUN" != "1" ]; then
     AVAIL_KB=$(df /overlay 2>/dev/null | awk 'NR==2{print $4}')
     if [ -n "$AVAIL_KB" ] && [ "$AVAIL_KB" -lt 30720 ]; then
@@ -132,7 +122,6 @@ if [ "$DRY_RUN" != "1" ]; then
     [ -n "$AVAIL_KB" ] && log "       Свободно в /overlay: ${AVAIL_KB} KB — OK"
 fi
 
-ASSET_VER=$(echo "${LATEST#v}" | sed 's/-extended//')
 TARBALL_URL="https://github.com/${SB_REPO}/releases/download/${LATEST}/sing-box-${LATEST#v}-${ARCH}-compressed.tar.gz"
 run "curl -sL --max-time 120 '${TARBALL_URL}' -o /tmp/sb.tar.gz" || die "Download failed"
 run "tar -xzf /tmp/sb.tar.gz -C /tmp/ 2>/dev/null"
@@ -149,14 +138,9 @@ else
 fi
 
 # ── 3. Create directory tree ──────────────────────────────────────────────────
-# Симлинк sub_cache → /var/run/ (tmpfs): сам симлинк хранится на Flash (маленький),
-# цель создаётся initd при каждом старте sing-box — Flash от записей кэша не изнашивается.
-# Директории /var/run/sing-box/* НЕ создаём здесь — это делает initd в start_service().
-# SRS-базы РКН остаются в /etc/sing-box/ напрямую: перезапись раз в неделю, износ пренебрежим.
 log "[3/8] Creating directories..."
 run "mkdir -p ${SING_BOX_DIR} ${WWW_DIR}"
 
-# rm -rf перед ln -sf: без этого при переустановке ln создаст симлинк ВНУТРИ существующей папки
 if [ "$DRY_RUN" != "1" ]; then
     rm -rf "${SING_BOX_DIR}/sub_cache"
     ln -sf /var/run/sing-box/sub_cache "${SING_BOX_DIR}/sub_cache"
@@ -167,16 +151,14 @@ ok "Directories ready (sub_cache → RAM, SRS → Flash)"
 
 # ── 4. Install project files from src/ ───────────────────────────────────────
 log "[4/8] Installing project files and automation tools..."
-deploy_utility "src/rpcd--singbox.lua"            "${RPCD_DIR}/singbox"            "755"
-deploy_utility "src/sbin--singbox-compiler.lua"   "/usr/sbin/singbox-compiler"     "755"
-deploy_utility "src/sbin--singbox-sub-updater.sh" "/usr/sbin/singbox-sub-updater"  "755"
-deploy_utility "src/initd--sing-box.sh"           "/etc/init.d/sing-box"           "755"
-deploy_utility "src/etc-singbox--update-rules.sh" "${SING_BOX_DIR}/update-rules.sh" "755"
-deploy_utility "src/www--singbox.html"            "${WWW_DIR}/singbox.html"
-
-# Новая логика деплоя сервисных утилит
-deploy_utility "test.sh" "/usr/sbin/test.sh" "755"
-deploy_utility "uninstall.sh" "/usr/sbin/singbox-uninstall" "755"
+deploy_utility "src/rpcd--singbox.lua"            "${RPCD_DIR}/singbox"              "755"
+deploy_utility "src/sbin--singbox-compiler.lua"   "/usr/sbin/singbox-compiler"       "755"
+deploy_utility "src/sbin--singbox-sub-updater.sh" "/usr/sbin/singbox-sub-updater"    "755"
+deploy_utility "src/initd--sing-box.sh"           "/etc/init.d/sing-box"             "755"
+deploy_utility "src/etc-singbox--update-rules.sh" "${SING_BOX_DIR}/update-rules.sh"  "755"
+deploy_utility "src/www--singbox.html"            "${WWW_DIR}/singbox.html"           "644"
+deploy_utility "test.sh"       "/usr/sbin/test.sh"            "755"
+deploy_utility "uninstall.sh"  "/usr/sbin/singbox-uninstall"  "755"
 ok "Core files and automation utilities installed successfully"
 
 # ── 5. Write RPcd ACL (inlined) ───────────────────────────────────────────────
@@ -210,7 +192,8 @@ log "[6/8] Setting up UCI config..."
 if command -v uci >/dev/null 2>&1; then
     if ! uci -q get singbox.main >/dev/null 2>&1; then
         if [ "$DRY_RUN" != "1" ]; then
-        uci batch << 'UCI'
+            touch /etc/config/singbox
+            uci batch << 'UCI'
 set singbox.main=main
 set singbox.main.enabled=0
 set singbox.main.tproxy_port=7893
@@ -240,10 +223,14 @@ if command -v uci >/dev/null 2>&1; then
         run "uci set uhttpd.singbox.home='${WWW_DIR}'"
         run "uci set uhttpd.singbox.index_page='singbox.html'"
         run "uci set uhttpd.singbox.rfc1918_filter='1'"
+        run "uci set uhttpd.singbox.ubus_prefix='/ubus'"
         run "uci commit uhttpd"
         ok "UI on port ${UI_PORT} (LAN only)"
     else
-        ok "uhttpd instance already configured"
+        # Апгрейд: убеждаемся что ubus_prefix выставлен
+        run "uci set uhttpd.singbox.ubus_prefix='/ubus'"
+        run "uci commit uhttpd"
+        ok "uhttpd instance updated"
     fi
 else
     echo "        ~ Skipping uhttpd config (command 'uci' not found)"
@@ -252,15 +239,13 @@ fi
 # ── 8. Blocklists, services, cron ─────────────────────────────────────────────
 log "[8/8] Final setup..."
 
-# Blocklists — скачивание пойдет уже напрямую в ОЗУ через созданную ссылку
 if [ "$DRY_RUN" != "1" ]; then
-    "${SING_BOX_DIR}/update-rules.sh" && ok "Blocklists downloaded to RAM" \
+    "${SING_BOX_DIR}/update-rules.sh" && ok "Blocklists downloaded" \
         || echo "        WARNING: blocklist download failed — run update-rules.sh manually later"
 else
     echo "        ~ ${SING_BOX_DIR}/update-rules.sh"
 fi
 
-# Services (only if init.d commands exist)
 if [ -x "/etc/init.d/sing-box" ] && [ -x "/etc/init.d/rpcd" ]; then
     run "/etc/init.d/sing-box enable"
     run "/etc/init.d/rpcd restart"
@@ -269,7 +254,6 @@ else
     echo "        ~ Skipping service management (not a fully booted OpenWrt system)"
 fi
 
-# Weekly cron: every Monday at 04:00
 if command -v crontab >/dev/null 2>&1; then
     if ! crontab -l 2>/dev/null | grep -qF "update-rules.sh"; then
         run "(crontab -l 2>/dev/null; echo '0 4 * * 1 ${SING_BOX_DIR}/update-rules.sh >/dev/null 2>&1') | crontab -"
@@ -283,7 +267,7 @@ fi
 # ── Done ──────────────────────────────────────────────────────────────────────
 LAN_IP="127.0.0.1"
 if command -v uci >/dev/null 2>&1; then
-    LAN_IP=$(uci -q get network.lan.ipaddr 2>/dev/null || echo "192.168.1.1")
+    LAN_IP=$(uci -q get network.lan.ipaddr 2>/dev/null | cut -d/ -f1 || echo "192.168.1.1")
 fi
 
 echo ""
