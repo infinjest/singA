@@ -26,16 +26,13 @@ if not clash_secret or clash_secret == "" then
 end
 
 local sb = {
-    log      = { level = "disabled" },
+    log      = { level = "info" },
     inbounds = { {
         type = "tproxy", tag = "tproxy-in", listen = "::",
         listen_port = 7893, 
-        sniff = true, 
-        sniff_override_destination = false
     } },
     outbounds = {
-        { type = "direct", tag = "direct", routing_mark = 255 },
-        { type = "dns",    tag = "dns-out" }
+        { type = "direct", tag = "direct", routing_mark = 255 }
     },
     route = { 
         rules = {},
@@ -46,7 +43,7 @@ local sb = {
         rules = {}, 
         final = "dns-local"
     },
-	experimental = { clash_api = { external_controller = "0.0.0.0:9090", secret = clash_secret } }
+        experimental = { clash_api = { external_controller = "0.0.0.0:9090", secret = clash_secret } }
 }
 
 local enabled = uci:get("singbox", "main", "enabled") or "0"
@@ -102,6 +99,7 @@ local function build_outbound(s, tag)
                 local h = (s.thost and s.thost ~= "" and s.thost) or s.sni
                 if h and h ~= "" then o.transport.host = h end
                 if s.mode and s.mode ~= "" then o.transport.mode = s.mode end
+                o.transport.x_padding_bytes = "100-1000"
             elseif s.transport == "grpc" then
                 if s.path and s.path ~= "" then
                     o.transport.service_name = s.path
@@ -131,7 +129,7 @@ local function build_outbound(s, tag)
         o.server = nil; o.server_port = nil
         
         if s.type == "amneziawg" then
-			o.jc   = tonumber(s.jc)   or 0
+                        o.jc   = tonumber(s.jc)   or 0
             o.jmin = tonumber(s.jmin) or 0; o.jmax = tonumber(s.jmax) or 0
             o.s1   = tonumber(s.s1)   or 0; o.s2   = tonumber(s.s2)   or 0
             o.h1   = tonumber(s.h1)   or 0; o.h2   = tonumber(s.h2)   or 0
@@ -148,7 +146,7 @@ local node_count = 0
 
 uci:foreach("singbox", "node", function(s)
     if not (s.tag and s.type and s.server) then return end
-	if s.enabled == "0" then return end
+        if s.enabled == "0" then return end
     node_count = node_count + 1
     local t = "node_" .. node_count .. "_" .. s.tag
     table.insert(sb.outbounds, build_outbound(s, t))
@@ -282,7 +280,7 @@ if rdbypass == "1" then
     end
 end
 
-sb.route.rules = { { protocol = "dns", outbound = "dns-out" } }
+sb.route.rules = { { action = "sniff" }, { protocol = "dns", action = "hijack-dns" } }
 for _, r in ipairs(rt_custom) do table.insert(sb.route.rules, r) end
 for _, r in ipairs(rt_force)  do table.insert(sb.route.rules, r) end
 for _, r in ipairs(rt_geo)    do table.insert(sb.route.rules, r) end

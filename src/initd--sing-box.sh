@@ -120,6 +120,7 @@ start_service() {
     procd_set_param limits nofile="65535 65535" core="0"
     procd_set_param stdout 0
     procd_set_param stderr 0
+    procd_set_param env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true ENABLE_DEPRECATED_OUTBOUND_DNS_RULE_ITEM=true ENABLE_DEPRECATED_MISSING_DOMAIN_RESOLVER=true
     procd_close_instance
 
     # ПАТЧ: Запускаем бинд-чекер и роутинг асинхронно, чтобы не блокировать procd

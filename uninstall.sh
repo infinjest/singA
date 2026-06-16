@@ -72,6 +72,19 @@ echo "[*] Перезапуск uhttpd, rpcd и cron..."
 /etc/init.d/rpcd restart 2>/dev/null || true
 /etc/init.d/cron restart 2>/dev/null || true
 
+# 8. Опциональное удаление пакетов (только если установлены singA-установщиком)
+echo "[*] Пакеты lua, luac, libuci-lua, libubus-lua, unzip, kmod-nft-socket"
+echo "    могут использоваться другими сервисами."
+echo "    Удалить их? [y/N]"
+read -r ANSWER
+if [ "$ANSWER" = "y" ] || [ "$ANSWER" = "Y" ]; then
+    if command -v apk >/dev/null 2>&1; then
+        apk del lua luac libuci-lua libubus-lua unzip kmod-nft-socket 2>/dev/null || true
+    elif command -v opkg >/dev/null 2>&1; then
+        opkg remove lua luac libuci-lua libubus-lua unzip kmod-nft-socket 2>/dev/null || true
+    fi
+fi
+
 echo "[+] ГОТОВО: Проект singA успешно и полностью удален из системы."
 
 # Самоудаление — скрипт удаляет себя последним действием

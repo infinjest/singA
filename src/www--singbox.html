@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Sing-Box Control Plane v7</title>
+    <title>singA UI</title>
     <style>
         :root { --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; --accent: #2563eb; --border: #334155; --danger: #ef4444; --success: #10b981; --warn: #f59e0b; }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; }
@@ -449,18 +449,28 @@ async function importVpnFile(e) {
     e.target.value = '';
     
     try {
-        let text = '';
-        const buffer = await file.arrayBuffer();
-        
-        // 1. Попытка декомпрессии Zlib (стандартный .vpn от Amnezia)
-        try {
-            const ds  = new DecompressionStream('deflate');
-            text = await new Response(new Blob([buffer]).stream().pipeThrough(ds)).text();
-        } catch {
-            text = new TextDecoder().decode(buffer);
-        }
+		let text = '';
+		const rawText = (await file.text()).trim();
 
-        let node = null;
+		// 1. base64url → base64 + Zlib/raw-deflate декомпрессия (стандартный .vpn от Amnezia)
+		let b64 = rawText.replace(/-/g, '+').replace(/_/g, '/');
+		while (b64.length % 4) b64 += '=';
+
+		try {
+			const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+			const ds  = new DecompressionStream('deflate');
+			text = await new Response(new Blob([bin]).stream().pipeThrough(ds)).text();
+		} catch {
+			try {
+				const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+				const ds  = new DecompressionStream('deflate-raw');
+				text = await new Response(new Blob([bin]).stream().pipeThrough(ds)).text();
+			} catch {
+				text = rawText;
+			}
+		}
+
+		let node = null;
 
         // 2. Попытка парсинга JSON (.vpn формат)
         try {
