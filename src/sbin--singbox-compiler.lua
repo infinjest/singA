@@ -34,9 +34,11 @@ local sb = {
     outbounds = {
         { type = "direct", tag = "direct", routing_mark = 255 }
     },
+    endpoints = {},
     route = { 
         rules = {},
-        final = "direct"
+        final = "direct",
+        auto_detect_interface = true
     },
     dns = { 
         servers = {}, 
@@ -56,9 +58,6 @@ local failover   = uci:get("singbox", "main", "failover")   or "0"
 local custom_dns = uci:get("singbox", "main", "custom_dns") or "https://dns.cloudflare.com/dns-query"
 local local_dns  = uci:get("singbox", "main", "local_dns")  or "tcp://77.88.8.8"
 
--- [ ПАТЧ 1 ]: Добавляем address_resolver="dns-local" в remote-сервер.
--- Это заставит ядро резолвить домен (например dns.cloudflare.com) через 
--- локальный IP (77.88.8.8), предотвращая мертвую петлю при перехвате DNS.
 table.insert(sb.dns.servers, { tag = "dns-remote", address = custom_dns, detour = "proxy", address_resolver = "dns-local" })
 table.insert(sb.dns.servers, { tag = "dns-local", address = local_dns, detour = "direct" })
 
@@ -107,38 +106,74 @@ local function build_outbound(s, tag)
                 end
             end
         end
-
-    elseif s.type == "amneziawg" or s.type == "wireguard" then
-        o.private_key = s.private_key or s.uuid
-        if type(s.local_address) == "table" then
-            o.local_address = s.local_address
-        else
-            o.local_address = {}
-            for addr in (s.local_address or ""):gmatch("[^,%s]+") do
-                table.insert(o.local_address, addr)
-            end
-        end
-        o.peers = {
+    end
+    return o
+end
+local function build_endpoint(s, tag)
+    local e = {
+        routing_mark = 255,
+        type = "wireguard",
+        tag = tag,
+        system = false,
+        private_key = s.private_key or s.uuid,
+        peers = {
             {
-                server = s.server,
-                server_port = tonumber(s.server_port) or 51820,
+                address = s.server,
+                port = tonumber(s.server_port) or 51820,
                 public_key = s.peer_public_key,
                 allowed_ips = { "0.0.0.0/0", "::/0" }
             }
         }
-        o.server = nil; o.server_port = nil
-        
-        if s.type == "amneziawg" then
-                        o.jc   = tonumber(s.jc)   or 0
-            o.jmin = tonumber(s.jmin) or 0; o.jmax = tonumber(s.jmax) or 0
-            o.s1   = tonumber(s.s1)   or 0; o.s2   = tonumber(s.s2)   or 0
-            o.h1   = tonumber(s.h1)   or 0; o.h2   = tonumber(s.h2)   or 0
-            o.h3   = tonumber(s.h3)   or 0; o.h4   = tonumber(s.h4)   or 0
+    }
+    if type(s.local_address) == "table" then
+        e.address = {}
+        for _, addr in ipairs(s.local_address) do
+            if not addr:find("/") then
+                addr = addr .. (addr:find(":") and "/128" or "/32")
+            end
+            table.insert(e.address, addr)
         end
-        o.tcp_fast_open = nil
-        o.multiplex     = nil
+    else
+        e.address = {}
+        for addr in (s.local_address or ""):gmatch("[^,%s]+") do
+            if not addr:find("/") then
+                addr = addr .. (addr:find(":") and "/128" or "/32")
+            end
+            table.insert(e.address, addr)
+        end
     end
-    return o
+    if s.type == "amneziawg" then
+        local function pick(v)
+            local n = tonumber(v)
+            if n then return n end
+            return 0
+        end
+        local function pick_str(v)
+            if type(v) == "string" and v ~= "" then return v end
+            return nil
+        end
+        e.detour = "direct"
+        e.jc   = pick(s.jc)
+        e.jmin = pick(s.jmin)
+        e.jmax = pick(s.jmax)
+        e.s1   = pick(s.s1)
+        e.s2   = pick(s.s2)
+        e.s3   = pick(s.s3)
+        e.s4   = pick(s.s4)
+        e.h1   = pick_str(s.h1)
+        e.h2   = pick_str(s.h2)
+        e.h3   = pick_str(s.h3)
+        e.h4   = pick_str(s.h4)
+        e.i1   = pick_str(s.i1)
+        e.i2   = pick_str(s.i2)
+        e.i3   = pick_str(s.i3)
+        e.i4   = pick_str(s.i4)
+        e.i5   = pick_str(s.i5)
+        if s.pre_shared_key and s.pre_shared_key ~= "" then
+            e.peers[1].pre_shared_key = s.pre_shared_key
+        end
+    end
+    return e
 end
 
 local proxy_tags = {}
@@ -149,7 +184,11 @@ uci:foreach("singbox", "node", function(s)
         if s.enabled == "0" then return end
     node_count = node_count + 1
     local t = "node_" .. node_count .. "_" .. s.tag
-    table.insert(sb.outbounds, build_outbound(s, t))
+    if s.type == "amneziawg" or s.type == "wireguard" then
+        table.insert(sb.endpoints, build_endpoint(s, t))
+    else
+        table.insert(sb.outbounds, build_outbound(s, t))
+    end
     table.insert(proxy_tags, t)
 end)
 
@@ -169,12 +208,15 @@ uci:foreach("singbox", "subscription", function(sub)
         if s.tag and s.type and s.server then
             node_count = node_count + 1
             local t = "sub_" .. node_count .. "_" .. s.tag
-            table.insert(sb.outbounds, build_outbound(s, t))
+            if s.type == "amneziawg" or s.type == "wireguard" then
+                table.insert(sb.endpoints, build_endpoint(s, t))
+            else
+                table.insert(sb.outbounds, build_outbound(s, t))
+            end
             table.insert(proxy_tags, t)
         end
     end
 end)
-
 if #proxy_tags == 0 then os.exit(1) end
 
 if failover == "1" and #proxy_tags > 1 then
@@ -256,8 +298,6 @@ end)
 
 -- Priority 3: geo-blocked lists
 if rdbypass == "1" then
-    -- [ ПАТЧ 2 ]: Безопасная проверка физического наличия баз. 
-    -- Если файлов нет (еще не скачались), компилятор не добавит их в конфиг, спасая sing-box от краха.
     local ru_path = "/etc/sing-box/ru-blocked.srs"
     local geoip_path = "/etc/sing-box/geoip-ru-blocked.srs"
     

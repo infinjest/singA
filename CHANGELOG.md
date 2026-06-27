@@ -4,6 +4,42 @@
 
 ---
 
+## [0.10.1] — 2026-06-28
+
+### Breaking
+
+- Ядро заменено: **shtorm-7/sing-box-extended → Leadaxe/sing-box-lx** (v1.13.13-lx.15).  
+  Причина: extended некорректно обрабатывал H1–H4 как Range — при генерации ответного handshake
+  сервер выбирал случайное значение из диапазона, клиент ожидал фиксированное начало диапазона →
+  `received invalid response message`, туннель не поднимался.  
+
+### Fixed
+
+- `compiler`: AmneziaWG-блок переписан под плоскую схему sing-box-lx (поля `jc/jmin/jmax/s1/s2/h1–h4` напрямую на endpoint, без вложенного `amnezia: {}`).
+- `compiler`: `system: false` — при vanilla wireguard в ядре `system: true` передавал AWG-параметры через UAPI в ядро, ядро их игнорировало, обфускация не работала.
+- `compiler`: `h1–h4` передаются строками-диапазонами (`"N-M"`) — lx принимает нативно.
+- `compiler`: добавлен `detour: "direct"` на AWG endpoint — UDP уходит через WAN, не заворачивается в TPROXY.
+- `compiler`: добавлен `route.auto_detect_interface: true` — устраняет `override-gateway: invalid IP`.
+- `rpcd`: `add_node` / `edit_node` — поля `s3`, `s4`, `pre_shared_key` добавлены в `allowed`; ранее молча выбрасывались при сохранении в UCI.
+- `rpcd`: `apply` при `enabled=0` — теперь останавливает sing-box вместо reload; ранее сервис оставался жить со старым конфигом.
+- `install`: убран `iproute2-ss` из `PKGS` — пакет отсутствует в arm64 apk-репозитории.
+- `install`: обновлён `TARBALL_URL` под именование lx-архивов (без суффикса `-compressed`).
+- `mirror workflow`: обновлён upstream `shtorm-7/sing-box-extended → Leadaxe/sing-box-lx`; именование ассетов приведено в соответствие; расписание сокращено с каждые 6 ч до раз в сутки; убран `linux-armv7` из списка архитектур.
+
+### Added
+
+- `compiler`: поля `s3`, `s4` (AWG 2.0 — junk-padding для cookie-reply и transport-сообщений).
+- `compiler`: поля `i1–i5` (CPS decoy packets, AWG 2.0).
+- `compiler`: `pre_shared_key` в `peers[0]` — поддержка PSK из UCI.
+- `singbox.html`: импорт `.vpn` — парсинг `S3`/`S4` из `awg.S3`/`awg.S4`; `pre_shared_key` из `last_config.psk_key`.
+- `singbox.html`: импорт `.conf` — парсинг `s3`, `s4`, `PresharedKey`.
+- `singbox.html`: edit-модал — поля `s3`, `s4`, `Pre-Shared Key`.
+
+### Changed
+- `README`: переписан и сокращен для лучшей читаемости.
+
+---
+
 ## [0.10.0] — 2026-06-ХХ
 
 > **Breaking:** требует sing-box-extended ≥ 1.13.0

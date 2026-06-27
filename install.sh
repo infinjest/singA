@@ -78,7 +78,7 @@ SRC="${SCRIPT_DIR}/src"
 
 # ── 1. Dependencies (apk vs opkg) ─────────────────────────────────────────────
 log "[1/8] Checking dependencies..."
-PKGS="curl ca-bundle kmod-nft-tproxy kmod-nft-socket lua luac libuci-lua libubus-lua unzip luci-lib-jsonc rpcd-mod-rpcsys uhttpd openssl-util coreutils-base64 iproute2-ss"
+PKGS="curl ca-bundle kmod-nft-tproxy kmod-nft-socket lua luac libuci-lua libubus-lua unzip luci-lib-jsonc rpcd-mod-rpcsys uhttpd openssl-util coreutils-base64"
 
 if command -v apk >/dev/null 2>&1; then
     log "       Detected 'apk' package manager (OpenWrt snapshot / Alpine Linux)"
@@ -122,7 +122,7 @@ if [ "$DRY_RUN" != "1" ]; then
     [ -n "$AVAIL_KB" ] && log "       Свободно в /overlay: ${AVAIL_KB} KB — OK"
 fi
 
-TARBALL_URL="https://github.com/${SB_REPO}/releases/download/${LATEST}/sing-box-${LATEST#v}-${ARCH}-compressed.tar.gz"
+TARBALL_URL="https://github.com/${SB_REPO}/releases/download/${LATEST}/sing-box-${LATEST#v}-${ARCH}.tar.gz"
 run "curl -sL --max-time 120 '${TARBALL_URL}' -o /tmp/sb.tar.gz" || die "Download failed"
 run "tar -xzf /tmp/sb.tar.gz -C /tmp/ 2>/dev/null"
 
