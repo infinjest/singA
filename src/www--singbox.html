@@ -36,7 +36,7 @@
         .lat-none { color: #64748b; }
         .sub-badge { font-size: .75rem; color: #64748b; margin-left: 6px; }
         iframe { width: 100%; height: 75vh; border: none; border-radius: 8px; }
-        #login-overlay { position: fixed; inset: 0; background: var(--bg); display: flex; justify-content: center; align-items: center; z-index: 1000; }		
+        #login-overlay { position: fixed; inset: 0; background: var(--bg); display: flex; justify-content: center; align-items: center; z-index: 1000; }
         .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; justify-content:center; align-items:center; z-index:500; }
         .modal { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:24px; width:520px; max-width:95vw; max-height:90vh; overflow-y:auto; }
         .modal h3 { margin-bottom:16px; }
@@ -150,12 +150,12 @@
         <div class="card">
             <h3>Узлы</h3>
             <table id="nodes-table"><thead><tr><th>Тег</th><th>Тип</th><th>Сервер</th><th>Порт</th><th>Latency</th><th></th></tr></thead><tbody></tbody></table>
-			<div style="display:flex;gap:8px">
-				<input type="file" id="vpn-upload-node" style="display:none" accept=".vpn,.conf,.json" onchange="importVpnFile(event)">
-				<button class="btn btn-success" onclick="document.getElementById('vpn-upload-node').click()">Импорт Файла</button>
-				<button class="btn btn-success" onclick="importVlessUri()">+ VLESS URI</button>
-				<button class="btn" onclick="addSubscription()">+ Подписка</button>
-			</div>
+                        <div style="display:flex;gap:8px">
+                                <input type="file" id="vpn-upload-node" style="display:none" accept=".vpn,.conf,.json" onchange="importVpnFile(event)">
+                                <button class="btn btn-success" onclick="document.getElementById('vpn-upload-node').click()">Импорт Файла</button>
+                                <button class="btn btn-success" onclick="importVlessUri()">+ VLESS URI</button>
+                                <button class="btn" onclick="addSubscription()">+ Подписка</button>
+                        </div>
         </div>
     </div>
 
@@ -205,6 +205,9 @@ function openEditModal(sec, n) {
             document.getElementById('edit-h2').value   = n.h2   || '0';
             document.getElementById('edit-h3').value   = n.h3   || '0';
             document.getElementById('edit-h4').value   = n.h4   || '0';
+            document.getElementById('edit-s3').value  = n.s3  || '0';
+            document.getElementById('edit-s4').value  = n.s4  || '0';
+            document.getElementById('edit-psk').value = n.pre_shared_key || '';
         }
     }
     document.getElementById('edit-modal').style.display = 'flex';
@@ -243,6 +246,9 @@ async function saveEditNode() {
             node.jmax = document.getElementById('edit-jmax').value || "0";
             node.s1   = document.getElementById('edit-s1').value || "0";
             node.s2   = document.getElementById('edit-s2').value || "0";
+            node.s3  = document.getElementById('edit-s3').value || "0";
+            node.s4  = document.getElementById('edit-s4').value || "0";
+            node.pre_shared_key = document.getElementById('edit-psk').value || "";
             node.h1   = document.getElementById('edit-h1').value || "0";
             node.h2   = document.getElementById('edit-h2').value || "0";
             node.h3   = document.getElementById('edit-h3').value || "0";
@@ -339,7 +345,7 @@ async function loadData() {
     document.getElementById('cfg-port').value       = cfg.main?.tproxy_port || "7893";
     document.getElementById('cfg-rdbypass').checked = cfg.main?.rdbypass  === "1";
     document.getElementById('cfg-failover').checked = cfg.main?.failover  === "1";
-	document.getElementById('cfg-cron').value       = cfg.main?.cron || "0 4 * * 1"; // НОВОЕ
+        document.getElementById('cfg-cron').value       = cfg.main?.cron || "0 4 * * 1"; // НОВОЕ
     document.getElementById('cfg-dns').value        = cfg.main?.custom_dns || "https://dns.cloudflare.com/dns-query";
     document.getElementById('cfg-local-dns').value  = cfg.main?.local_dns  || "tcp://77.88.8.8";
 
@@ -449,50 +455,64 @@ async function importVpnFile(e) {
     e.target.value = '';
     
     try {
-		let text = '';
-		const rawText = (await file.text()).trim();
+                let text = '';
+                const rawText = (await file.text()).trim().replace(/^vpn:\/\//, '');
 
-		// 1. base64url → base64 + Zlib/raw-deflate декомпрессия (стандартный .vpn от Amnezia)
-		let b64 = rawText.replace(/-/g, '+').replace(/_/g, '/');
-		while (b64.length % 4) b64 += '=';
+                // 1. base64url → base64 + Zlib/raw-deflate декомпрессия (стандартный .vpn от Amnezia)
+                let b64 = rawText.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+                while (b64.length % 4) b64 += '=';
 
-		try {
-			const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-			const ds  = new DecompressionStream('deflate');
-			text = await new Response(new Blob([bin]).stream().pipeThrough(ds)).text();
-		} catch {
-			try {
-				const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-				const ds  = new DecompressionStream('deflate-raw');
-				text = await new Response(new Blob([bin]).stream().pipeThrough(ds)).text();
-			} catch {
-				text = rawText;
-			}
-		}
+                try {
+                        const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0)).slice(4);
+                        const ds  = new DecompressionStream('deflate');
+                        text = await new Response(new Blob([bin]).stream().pipeThrough(ds)).text();
+                } catch {
+                        try {
+                                const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0)).slice(4);
+                                const ds  = new DecompressionStream('deflate-raw');
+                                text = await new Response(new Blob([bin]).stream().pipeThrough(ds)).text();
+                        } catch {
+                                text = rawText;
+                        }
+                }
 
-		let node = null;
+                let node = null;
 
         // 2. Попытка парсинга JSON (.vpn формат)
         try {
             const data = JSON.parse(text);
-            let awg = null;
+            let container = null;
             if (Array.isArray(data.containers)) {
-                awg = data.containers.find(c => ['amnezia-awg', 'amneziawg', 'awg'].includes(c.container));
+                container = data.containers.find(c => ['amnezia-awg', 'amnezia-awg2', 'amneziawg', 'awg'].includes(c.container));
             } else if (data.containers) {
-                awg = data.containers.amneziawg || data.containers.awg;
+                container = data.containers['amnezia-awg2'] || data.containers['amnezia-awg'] || data.containers.amneziawg || data.containers.awg;
             }
-            if (!awg) throw new Error('Контейнер AmneziaWG не найден');
+            if (!container) throw new Error('Контейнер AmneziaWG не найден');
+            // в экспортах Amnezia 2.x сама конфигурация лежит во вложенном объекте .awg,
+            // а не в самом контейнере
+            const awg = container.awg || container;
+            // last_config приходит как JSON, сериализованный в строку (не объект) —
+            // нужен отдельный JSON.parse, иначе все поля внутри будут undefined
+            let lc = {};
+            if (typeof awg.last_config === 'string') {
+                try { lc = JSON.parse(awg.last_config); } catch { lc = {}; }
+            } else if (awg.last_config && typeof awg.last_config === 'object') {
+                lc = awg.last_config;
+            }
 
             node = {
                 type: 'amneziawg', tag: 'Amnezia_' + (awg.awg_port || awg.port || 'AWG'),
-                server: data.last_config?.host || data.host || prompt('IP сервера не найден. Введите вручную:', ''),
-                server_port: String(awg.awg_port || awg.port || 443), private_key: awg.awg_private_key || awg.priv_key,
-                peer_public_key: awg.awg_public_key || awg.pub_key, local_address: awg.awg_ip || awg.client_ip || '10.8.0.2/32',
+                server: data.hostName || lc.host || data.last_config?.host || data.host || prompt('IP сервера не найден. Введите вручную:', ''),
+                server_port: String(awg.awg_port || awg.port || 443),
+                private_key: lc.client_priv_key || awg.awg_private_key || awg.priv_key,
+                peer_public_key: lc.server_pub_key || awg.awg_public_key || awg.pub_key,
+                local_address: lc.client_ip || awg.awg_ip || awg.client_ip || '10.8.0.2/32',
                 jc: String(awg.Jc || parseInt(awg.junkPacketCount) || 0),
-				jmin: String(awg.Jmin || parseInt(awg.junkPacketMinSize) || 0), jmax: String(awg.Jmax || parseInt(awg.junkPacketMaxSize) || 0),
-                s1: String(awg.S1 || parseInt(awg.initPacketJunkSize) || 0), s2: String(awg.S2 || parseInt(awg.responsePacketJunkSize) || 0),
+                                jmin: String(awg.Jmin || parseInt(awg.junkPacketMinSize) || 0), jmax: String(awg.Jmax || parseInt(awg.junkPacketMaxSize) || 0),
+                s1: String(awg.S1 || parseInt(awg.initPacketJunkSize) || 0), s2: String(awg.S2 || parseInt(awg.responsePacketJunkSize) || 0), s3: String(awg.S3 || 0), s4: String(awg.S4 || 0),
                 h1: String(awg.H1 || parseInt(awg.initPacketMagicHeader) || 0), h2: String(awg.H2 || parseInt(awg.responsePacketMagicHeader) || 0),
-                h3: String(awg.H3 || parseInt(awg.underloadPacketMagicHeader) || 0), h4: String(awg.H4 || parseInt(awg.transportPacketMagicHeader) || 0)
+                h3: String(awg.H3 || parseInt(awg.underloadPacketMagicHeader) || 0), h4: String(awg.H4 || parseInt(awg.transportPacketMagicHeader) || 0),
+                pre_shared_key: lc.psk_key || lc.psk || lc.preshared_key || lc.pre_shared_key || awg.psk || ''
             };
         } catch (jsonError) {
             // 3. Если JSON упал, пробуем парсить как текстовый .conf (INI) формат WireGuard/AWG
@@ -511,8 +531,11 @@ async function importVpnFile(e) {
                     server_port: endpoint[1] || '443', private_key: conf.privatekey, peer_public_key: conf.publickey,
                     local_address: conf.address || '10.8.0.2/32',
                     jc: String(conf.jc || 0),
-					jmin: String(conf.jmin || 0), jmax: String(conf.jmax || 0),
-                    s1: String(conf.s1 || 0), s2: String(conf.s2 || 0), h1: String(conf.h1 || 0),
+                    jmin: String(conf.jmin || 0), jmax: String(conf.jmax || 0),
+                    s1: String(conf.s1 || 0), s2: String(conf.s2 || 0),
+                    s3: String(conf.s3 || 0), s4: String(conf.s4 || 0),
+                    h1: String(conf.h1 || 0),
+                    pre_shared_key: conf.presharedkey || '',
                     h2: String(conf.h2 || 0), h3: String(conf.h3 || 0), h4: String(conf.h4 || 0)
                 };
             } else {
@@ -605,7 +628,7 @@ async function importVlessUri() {
             </div>
             <div class="form-group"><label>Path</label><input type="text" id="edit-path"></div>
         </div>
-		<div id="edit-awg-fields">
+                <div id="edit-awg-fields">
             <div class="form-group"><label>Private Key</label><input type="text" id="edit-privkey"></div>
             <div class="form-group"><label>Peer Public Key</label><input type="text" id="edit-pubkey"></div>
             <div class="form-group"><label>Local Address</label><input type="text" id="edit-localaddr"></div>
@@ -615,10 +638,13 @@ async function importVlessUri() {
                 <div class="form-group"><label>jmax</label><input type="text" id="edit-jmax"></div>
                 <div class="form-group"><label>s1</label><input type="text" id="edit-s1"></div>
                 <div class="form-group"><label>s2</label><input type="text" id="edit-s2"></div>
+                <div class="form-group"><label>s3</label><input type="text" id="edit-s3"></div>
+                <div class="form-group"><label>s4</label><input type="text" id="edit-s4"></div>
                 <div class="form-group"><label>h1</label><input type="text" id="edit-h1"></div>
                 <div class="form-group"><label>h2</label><input type="text" id="edit-h2"></div>
                 <div class="form-group"><label>h3</label><input type="text" id="edit-h3"></div>
                 <div class="form-group"><label>h4</label><input type="text" id="edit-h4"></div>
+                <div class="form-group" style="grid-column:1/-1"><label>Pre-Shared Key</label><input type="text" id="edit-psk"></div>
             </div>
         </div>
         <div class="modal-footer">

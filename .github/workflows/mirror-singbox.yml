@@ -1,24 +1,22 @@
-name: Mirror sing-box-extended releases
+name: Mirror sing-box-lx releases
 
 on:
   schedule:
-    - cron: '0 */6 * * *'   # Проверка каждые 6 часов
-  workflow_dispatch:        # Возможность ручного запуска кнопкой
+    - cron: '0 4 * * *'
+  workflow_dispatch:
 
 jobs:
   mirror:
     runs-on: ubuntu-latest
     permissions:
-      contents: write       # Критично: дает права на создание релизов
+      contents: write
     steps:
       - name: Get latest upstream release
         id: upstream
         run: |
-          RELEASE=$(curl -s https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest)
+          RELEASE=$(curl -s https://api.github.com/repos/Leadaxe/sing-box-lx/releases/latest)
           TAG=$(echo "$RELEASE" | jq -r .tag_name)
-          BODY=$(echo "$RELEASE" | jq -r .body | head -c 500)
-          
-          # Безопасная запись многострочного текста в GITHUB_OUTPUT
+          BODY=$(echo "$RELEASE" | jq -r .body | head -c 500)  
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "body<<EOF" >> $GITHUB_OUTPUT
           echo "$BODY" >> $GITHUB_OUTPUT
@@ -39,15 +37,10 @@ jobs:
         if: steps.check.outputs.exists == 'false'
         run: |
           TAG="${{ steps.upstream.outputs.tag }}"
-          for ARCH in linux-arm64 linux-amd64 linux-armv7; do
-            # Убираем манипуляции с CLEAN_TAG, используем TAG напрямую
-            # чтобы имя файла в точности соответствовало оригиналу:
-            # sing-box-1.13.12-extended-2.4.1-linux-arm64-compressed.tar.gz
-            ASSET="sing-box-${TAG#v}-${ARCH}-compressed.tar.gz"
-            
+          for ARCH in linux-arm64; do
+            ASSET="sing-box-${TAG#v}-${ARCH}.tar.gz"
             echo "Downloading upstream asset: ${ASSET}"
-            # Добавляем -f (fail), чтобы не сохранять 404 страницы!
-            curl -sfL "https://github.com/shtorm-7/sing-box-extended/releases/download/${TAG}/${ASSET}" \
+            curl -sfL "https://github.com/Leadaxe/sing-box-lx/releases/download/${TAG}/${ASSET}" \
               -o "${ASSET}"
           done
 
@@ -56,9 +49,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.upstream.outputs.tag }}
-          name: "sing-box-extended ${{ steps.upstream.outputs.tag }}"
+          name: "sing-box-lx ${{ steps.upstream.outputs.tag }}"
           body: |
-            Automated mirror of shtorm-7/sing-box-extended ${{ steps.upstream.outputs.tag }}
-            
+            Automated mirror of Leadaxe/sing-box-lx ${{ steps.upstream.outputs.tag }}
             ${{ steps.upstream.outputs.body }}
           files: "*.tar.gz"
