@@ -8,8 +8,7 @@ local method = arg[1]
 local action = arg[2]
 
 if method == "list" then
-    -- Hardcoded JSON: json.stringify({}) → "[]", ломает UBUS-интроспекцию
-	print('{"status":{},"get_config":{},"add_node":{"node":"table"},"del_node":{"section":"string"},"edit_node":{"section":"string","node":"table"},"set_settings":{"settings":"table"},"add_rule":{"rule":"table"},"del_rule":{"section":"string"},"set_rules":{"force_proxy":"table","force_direct":"table"},"add_subscription":{"label":"string","url":"string"},"update_sub":{"section":"string"},"apply":{},"change_password":{"password":"string"}}')
+    print('{"status":{},"get_config":{},"add_node":{"node":"table"},"del_node":{"section":"string"},"edit_node":{"section":"string","node":"table"},"set_settings":{"settings":"table"},"add_rule":{"rule":"table"},"del_rule":{"section":"string"},"set_rules":{"force_proxy":"table","force_direct":"table"},"add_subscription":{"label":"string","url":"string"},"update_sub":{"section":"string"},"apply":{},"change_password":{"password":"string"}}')
     os.exit(0)
 end
 
@@ -113,10 +112,10 @@ elseif action == "del_node" then
         os.remove("/var/run/singbox_sub_" .. req.section .. ".json")
         os.remove(SUB_CACHE_DIR .. "/" .. req.section .. ".json")
         local to_delete = {}
-		uci:foreach("singbox", "node", function(s)
-			if s.subscription == req.section then table.insert(to_delete, s[".name"]) end
-		end)
-		for _, name in ipairs(to_delete) do uci:delete("singbox", name) end
+        uci:foreach("singbox", "node", function(s)
+            if s.subscription == req.section then table.insert(to_delete, s[".name"]) end
+        end)
+        for _, name in ipairs(to_delete) do uci:delete("singbox", name) end
     end
     uci:delete("singbox", req.section)
     uci:save("singbox")
@@ -127,7 +126,7 @@ elseif action == "add_node" then
     local allowed = {
         type=true, tag=true, server=true, server_port=true, uuid=true, security=true, sni=true, pbk=true, sid=true,
         private_key=true, peer_public_key=true, local_address=true, jc=true, jmin=true, jmax=true, s1=true, s2=true,
-        h1=true, h2=true, h3=true, h4=true,
+        s3=true, s4=true, pre_shared_key=true, h1=true, h2=true, h3=true, h4=true,
         transport=true, path=true, thost=true, mode=true, enabled=true
     }
     local sname = uci:add("singbox", "node")
@@ -148,19 +147,19 @@ elseif action == "edit_node" then
     local allowed = {
         tag=true, server=true, server_port=true, uuid=true, security=true, sni=true, pbk=true, sid=true,
         private_key=true, peer_public_key=true, local_address=true, jc=true, jmin=true, jmax=true, s1=true, s2=true,
-        h1=true, h2=true, h3=true, h4=true,
+        s3=true, s4=true, pre_shared_key=true, h1=true, h2=true, h3=true, h4=true,
         transport=true, path=true, thost=true, mode=true, enabled=true
     }
     for k, v in pairs(req.node) do
-		if allowed[k] then
-			local safe = tostring(v):gsub("['\"\\\n\r\t]", "")
-			if safe == "" then
-				uci:delete("singbox", req.section, k)
-			else
-				uci:set("singbox", req.section, k, safe)
-			end
-		end
-	end
+        if allowed[k] then
+            local safe = tostring(v):gsub("['\"\\\n\r\t]", "")
+            if safe == "" then
+                uci:delete("singbox", req.section, k)
+            else
+                uci:set("singbox", req.section, k, safe)
+            end
+        end
+    end
     uci:save("singbox")
     respond({ status = "ok" })
 
@@ -168,11 +167,9 @@ elseif action == "set_settings" then
     for k, v in pairs(req.settings or {}) do uci:set("singbox", "main", k, tostring(v)) end
     uci:save("singbox")
     
-    -- Динамическое управление Cron с защитой от инъекций (Белый список символов)
     local cron = (req.settings or {}).cron or uci:get("singbox", "main", "cron") or "0 4 * * 1"
     local safe_cron = cron:gsub("'", ""):gsub("[^%d%*/,%-% ]", "")
 
-    -- Атомарное обновление cron: sed -i на busybox ненадёжен
     os.execute("mkdir -p /etc/crontabs && touch /etc/crontabs/root")
     if cron ~= "disable" and safe_cron ~= "" then
         os.execute("grep -v 'update-rules.sh' /etc/crontabs/root > /etc/crontabs/root.tmp; echo '"
@@ -183,25 +180,23 @@ elseif action == "set_settings" then
             .. " && mv /etc/crontabs/root.tmp /etc/crontabs/root")
     end
     os.execute("/etc/init.d/cron restart 2>/dev/null")
-    
     respond({ status = "ok" })
 
 elseif action == "change_password" then
-	if type(req.password) ~= "string" or req.password == "" then 
-		respond({ error = "Пароль не может быть пустым" }) 
-	end
-	-- Устранение уязвимости Newline Injection и экранирование кавычек
-	local safe_pass = req.password:gsub("[\n\r]", ""):gsub("'", "'\\''")
-	
-	-- [ ПАТЧ ]: Замена echo на printf для защиты от инъекции управляющих флагов (-e, -n)
-	local cmd = "printf 'root:%s\\n' '" .. safe_pass .. "' | chpasswd 2>/dev/null"
-	
-	local res = os.execute(cmd)
-	if res == 0 or res == true then 
-		respond({ status = "ok" }) 
-	else 
-		respond({ error = "Ошибка при смене пароля" }) 
-	end
+    if type(req.password) ~= "string" or req.password == "" then 
+        respond({ error = "Пароль не может быть пустым" }) 
+    end
+
+    local safe_pass = req.password:gsub("[\n\r]", ""):gsub("'", "'\\''")
+
+    local cmd = "printf 'root:%s\\n' '" .. safe_pass .. "' | chpasswd 2>/dev/null"
+
+    local res = os.execute(cmd)
+    if res == 0 or res == true then 
+        respond({ status = "ok" }) 
+    else 
+        respond({ error = "Ошибка при смене пароля" }) 
+    end
 
 elseif action == "update_sub" then
     local sec = ""
@@ -214,8 +209,14 @@ elseif action == "update_sub" then
 
 elseif action == "apply" then
     uci:commit("singbox")
-    local res = os.execute("/etc/init.d/sing-box reload")
-    if res == 0 or res == true then respond({ status = "ok" }) else respond({ error = "Reload failed" }) end
+    local enabled = uci:get("singbox", "main", "enabled") or "0"
+    if enabled ~= "1" then
+        os.execute("/etc/init.d/sing-box stop")
+        respond({ status = "ok" })
+    else
+        local res = os.execute("/etc/init.d/sing-box reload")
+        if res == 0 or res == true then respond({ status = "ok" }) else respond({ error = "Reload failed" }) end
+    end
 
 else
     respond({ error = "Unknown action: " .. tostring(action) })

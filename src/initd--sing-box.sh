@@ -13,7 +13,6 @@ TPROXY_TABLE="100"
 
 _port_bound() {
     if command -v ss >/dev/null 2>&1; then
-        # ПАТЧ: Надежная проверка порта для IPv6 в BusyBox (игнорирует символы после порта)
         ss -tnlp 2>/dev/null | grep -qE ":${1}[^0-9]"
     else
         netstat -an 2>/dev/null | grep -qE ":${1}[^0-9]"
@@ -91,12 +90,11 @@ clean_routing() {
 }
 
 start_service() {
-    # ПАТЧ: Инициализация структуры директорий в tmpfs (RAM) при каждом старте
     mkdir -p /var/run/sing-box/sub_cache
     mkdir -p /var/run/sing-box/rules
 
     local has_cache=0
-    # ПАТЧ: Читаем кэш из правильной tmpfs директории
+
     ls /var/run/sing-box/sub_cache/*.json >/dev/null 2>&1 && has_cache=1
 
     if [ "$has_cache" -eq 0 ] && [ -x "/usr/sbin/singbox-sub-updater" ]; then
@@ -123,7 +121,6 @@ start_service() {
     procd_set_param env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true ENABLE_DEPRECATED_OUTBOUND_DNS_RULE_ITEM=true ENABLE_DEPRECATED_MISSING_DOMAIN_RESOLVER=true
     procd_close_instance
 
-    # ПАТЧ: Запускаем бинд-чекер и роутинг асинхронно, чтобы не блокировать procd
     init_routing &
 }
 
@@ -133,7 +130,6 @@ stop_service() {
 }
 
 reload_service() {
-    # ПАТЧ: Ядро может не поддерживать HUP для конфигов, используем жесткий рестарт инстанса
     "$COMPILER" || return 1
     [ -f "$RUN_CONFIG" ] || return 0
     rc_procd start_service
