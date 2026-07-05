@@ -4,6 +4,46 @@
 
 ---
 
+## [0.10.2] — 2026-07-05
+
+### Breaking / Removed
+
+- **`rdbypass` (бинарный флаг обхода) заменён на `route_mode` (1–4)**: 1 — всё в proxy, 2 — всё в proxy кроме РФ-доменов (`geosite-ru.srs`, MetaCubeX), 3 — обход РКН-блокировок (`ru-blocked.srs` + `geoip-ru-blocked.srs`, runetfreedom, дефолт), 4 — всё в direct. `install.sh` мигрирует существующие конфиги (`rdbypass=1` → `route_mode=3`, иначе → `route_mode=4`).
+- **Смена пароля роутера (`change_password`) удалена** — как из `rpcd--singbox.lua` (RPC-метод и ACL), так и из `www--singbox.html` (карточка «Смена пароля шлюза»).
+- **Вкладка «Дашборд» (iframe) удалена** из `www--singbox.html`.
+- **`test.sh` разделён на `integrity-test.sh` и `compiler-test.sh`**, устанавливаются как `/usr/sbin/singbox-integrity-test` и `/usr/sbin/singbox-compiler-test`.
+
+### Added
+
+- **DNS-правила по доменам** (`dns_rule` в uci) — привязка кастомного DNS-сервера к конкретным доменам (например `tls://xbox-dns.ru` для `gemini.google.com`), применяется только в `route_mode=3`.
+- **Кастомные исключения маршрутизации** (`custom_rule` в uci) — ручной override `outbound` (proxy/direct) по source/domain/ip, применяется только в `route_mode=3`.
+- **Cron-расписание обновления баз** (`cron_schedule` в uci) — выбор из UI вместо свободного ввода cron-строки.
+- Новые RPC-методы в `rpcd--singbox.lua`: `add_dns_rule`/`del_dns_rule`, `get_log`, `get_running_config`, `check_connectivity`.
+- `status`: возвращает версию sing-box и дату последнего обновления баз (зависит от `route_mode`) — отображается в шапке UI.
+- `uninstall.sh`: флаг `--purge` для полного удаления UCI-конфига (по умолчанию конфиг теперь сохраняется).
+- UI: тосты на добавление/удаление правил и DNS-записей; выбор DNS/cron через select вместо свободного текста; кнопки «Проверить связь», «Скачать конфиг», «Лог»; viewport meta для мобильных экранов.
+
+### Fixed
+
+- **Режим 3, ложные срабатывания geoip-катча**: правило `{ rule_set = {"geosite-blocked","geoip-blocked"}, outbound="proxy" }` матчило по OR — легитимные российские домены (подтверждено на `vk.com`), чей резолвленный IP пересекается с диапазонами `geoip-ru-blocked.srs`, ошибочно уходили в proxy. Исправлено: правило разбито на два — `geosite-blocked` матчит по домену как раньше; `geoip-blocked` теперь оформлено как `logical`/`and` с `protocol = {tls,http,quic}, invert=true`, то есть срабатывает только когда sniff не смог опознать домен. Решение использует исключительно данные runetfreedom, без данных MetaCubeX/режима 2. Подтверждено через Clash API (`/connections`, поле `chains`) на нескольких доменах.
+- `update-rules.sh` полностью переписан: атомарная загрузка через temp-файл, валидация по magic-байтам (`SRS`/`PK` через `head -c`, не `od` — BusyBox даёт другой вывод), никогда не затирает рабочий файл при неудачной загрузке. Устранён краш-луп sing-box в режиме 2 («TProxy port not bound»), вызванный битым/HTML-мусором вместо `.srs` из-за отсутствия `-f` в curl. Исправлен неверный URL режима 2: файл называется `category-ru.srs`, а не `ru.srs` (404).
+- `compiler`: legacy DNS-формат → новый формат sing-box 1.12+ (`dns.servers[].type/server`).
+- `compiler`: deprecated outbound DNS rule item → `route.default_domain_resolver`.
+- `compiler`: убрана мёртвая переменная `rdbypass`.
+- `compiler`: `db_mtime`/`db_label` зависят от route_mode, берутся через `date -r` вместо несуществующего `geoip.db`.
+- `compiler`: исправлен Lua multi-return баг в `gsub()` без скобок, из-за которого `add_dns_rule` падал без ответа.
+- `compiler`: DNS-правило для `gemini.google.com` — протокол исправлен на `tls://` вместо `https://.../dns-query`.
+- `compiler`: `custom_rule`/`dns_rule` гарантированно применяются только при `route_mode=3` (устранено расхождение backend/UI).
+- `rpcd`: `set_settings` — allowlist разрешённых ключей вместо записи произвольных полей из запроса.
+- `rpcd`: `update_sub` — сброс DNS-кэша (`dnsmasq restart`) после обновления, иначе правила по `domain_suffix` не применяются к уже закэшированным резолвам.
+- UI: кнопка dirty-state — `loadData()` вызывала не ту функцию, оставалась оранжевой при загрузке.
+- UI: автофокус на поле пароля.
+- UI: карточка «Правила маршрутизации (Исключения)» скрыта при `route_mode ≠ 3`.
+- `check_connectivity`: BusyBox `wget -q` глушил вывод — переписано на проверку exit-кода.
+- `compiler-test.sh` проходит 4/4 (фикс detour DNS-серверов, порядок режимов в тесте 1→2→4→3).
+
+---
+
 ## [0.10.1] — 2026-06-28
 
 ### Breaking

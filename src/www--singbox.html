@@ -2,7 +2,8 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>singA UI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>singA @@SINGA_VERSION@@</title>
     <style>
         :root { --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; --accent: #2563eb; --border: #334155; --danger: #ef4444; --success: #10b981; --warn: #f59e0b; }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; }
@@ -43,6 +44,7 @@
         .modal-footer { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; }
         .btn-sm { padding:4px 10px; font-size:.85rem; }
         .toggle-off { background: var(--border); color: #94a3b8; }
+        .toggle-dirty { background: #f59e0b; color: #1e293b; font-weight: 600; }
     </style>
 </head>
 <body>
@@ -50,7 +52,7 @@
 <div id="login-overlay">
     <div class="card" style="width:340px">
         <h2 style="margin-bottom:16px">Вход в шлюз</h2>
-        <div class="form-group"><input type="password" id="rpc-pass" placeholder="Пароль роутера" onkeydown="if(event.key==='Enter') initAuth()"></div>
+        <div class="form-group"><input type="password" id="rpc-pass" placeholder="Пароль роутера" autofocus onkeydown="if(event.key==='Enter') initAuth()"></div>
         <button class="btn" style="width:100%" onclick="initAuth()">Войти</button>
         <p id="login-error" style="color:var(--danger);margin-top:10px;font-size:.85rem"></p>
     </div>
@@ -58,79 +60,108 @@
 
 <div class="container">
     <header>
-        <h2>Sing-Box Control Plane v7</h2>
-        <div style="display:flex;gap:10px;align-items:center">
+        <h2>singA <span id="singa-ver">@@SINGA_VERSION@@</span></h2>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <span id="pill-core" class="status-pill">Ядро: ...</span>
-            <span id="pill-sub"  class="status-pill">Подписки: ожидание</span>
+            <span id="pill-sb-ver" class="status-pill" style="display:none"></span>
+            <span id="pill-db-mtime" class="status-pill" style="display:none"></span>
             <span id="pill-node" class="status-pill" style="display:none"></span>
+            <button id="btn-toggle" class="btn toggle-off" onclick="toggleEnabled()" style="min-width:140px">...</button>
         </div>
     </header>
 
     <div class="tabs">
         <button class="tab-btn active" onclick="switchTab(event,'routing')">Параметры</button>
         <button class="tab-btn"        onclick="switchTab(event,'nodes')">Узлы и Подписки</button>
-        <button class="tab-btn"        onclick="switchTab(event,'dashboard')">Дашборд</button>
     </div>
 
     <div id="tab-routing" class="tab-content active">
         <div class="grid">
             <div class="card">
                 <h3>Конфигурация прокси</h3>
-                <div class="form-group" style="display: inline-block; margin-right: 20px;">
-                    <label><input type="checkbox" id="cfg-enabled"> Включить TProxy</label>
-                </div>
-                <div class="form-group" style="display: inline-block; margin-right: 20px;">
-                    <label><input type="checkbox" id="cfg-rdbypass"> Проксировать заблокированные RU ресурсы</label>
-                </div>
-                <div class="form-group" style="display: inline-block;">
-                    <label><input type="checkbox" id="cfg-failover"> Балансировка — URLTest</label>
-                </div>
-                <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
-                    <div class="form-group" style="flex: 1; min-width: 120px;">
-                        <label>Порт перехвата</label>
-                        <input type="text" id="cfg-port">
+                <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-end">
+                    <div class="form-group" style="flex:1;min-width:200px">
+                        <label>Режим маршрутизации</label>
+                        <select id="cfg-route-mode" onchange="onRouteModeChange()">
+                            <option value="1">1 — Всё в proxy</option>
+                            <option value="2">2 — Всё в proxy кроме РУ</option>
+                            <option value="3">3 — Обход РКН (дефолт)</option>
+                            <option value="4">4 — Всё в direct</option>
+                        </select>
                     </div>
-                    <div class="form-group" style="flex: 1; min-width: 150px;">
-                        <label>Cron баз РКН</label>
-                        <input type="text" id="cfg-cron" placeholder="0 4 * * 1">
+                    <div class="form-group" style="flex:1;min-width:180px">
+                        <label>Обновление баз РКН</label>
+                        <select id="cfg-cron" onchange="markDirty()">
+                            <option value="0 4 * * *">Раз в день</option>
+                            <option value="0 4 * * 1">Раз в неделю</option>
+                            <option value="0 4 1 * *">Раз в месяц</option>
+                            <option value="disable">Не обновлять</option>
+                        </select>
                     </div>
-                    <div class="form-group" style="flex: 2; min-width: 200px;">
+                    <div class="form-group" style="flex:1;min-width:140px">
+                        <label><input type="checkbox" id="cfg-failover" onchange="markDirty()"> Балансировка URLTest</label>
+                    </div>
+                </div>
+
+                <div style="display:flex;gap:15px;flex-wrap:wrap;margin-top:4px">
+                    <div class="form-group" style="flex:1;min-width:220px">
                         <label>Upstream DNS (в туннеле)</label>
-                        <input type="text" id="cfg-dns" placeholder="https://dns.cloudflare.com/dns-query">
+                        <select id="cfg-dns-select" onchange="onDnsSelectChange('dns')">
+                            <option value="https://dns.cloudflare.com/dns-query">Cloudflare DoH (дефолт)</option>
+                            <option value="https://dns.adguard-dns.com/dns-query">AdGuard DoH</option>
+                            <option value="https://dns.google/dns-query">Google DoH</option>
+                            <option value="__custom__">Задать свой...</option>
+                        </select>
+                        <input type="text" id="cfg-dns" placeholder="https://..." style="margin-top:6px;display:none" oninput="markDirty()">
                     </div>
-                    <div class="form-group" style="flex: 2; min-width: 200px;">
-                        <label>Local DNS (напрямую, ISP)</label>
-                        <input type="text" id="cfg-local-dns" placeholder="tcp://77.88.8.8">
+                    <div class="form-group" style="flex:1;min-width:220px">
+                        <label>Local DNS (напрямую)</label>
+                        <select id="cfg-local-dns-select" onchange="onDnsSelectChange('local')">
+                            <option value="tcp://77.88.8.8">Яндекс 77.88.8.8 (дефолт)</option>
+                            <option value="tcp://94.140.14.14">AdGuard 94.140.14.14</option>
+                            <option value="tcp://1.1.1.1">Cloudflare 1.1.1.1</option>
+                            <option value="tcp://8.8.8.8">Google 8.8.8.8</option>
+                            <option value="__custom__">Задать свой...</option>
+                        </select>
+                        <input type="text" id="cfg-local-dns" placeholder="tcp://..." style="margin-top:6px;display:none" oninput="markDirty()">
                     </div>
                 </div>
-                <button class="btn btn-success" id="btn-apply" onclick="saveSettings()" style="margin-top: 10px;">
-                    Применить конфигурацию
-                </button>
+
+                <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+                    <button class="btn btn-success" id="btn-apply" onclick="saveSettings()">Применить конфигурацию</button>
+                    <button class="btn" style="background:var(--border)" onclick="checkConnectivity()">Проверить связь</button>
+                    <button class="btn" style="background:var(--border)" onclick="downloadConfig()">Скачать конфиг</button>
+                    <button class="btn" style="background:var(--border)" onclick="showLog()">Лог</button>
+                </div>
             </div>
 
-            <div class="card">
-                <h3>Смена пароля шлюза (root)</h3>
-                <div style="display: flex; gap: 15px; max-width: 500px;">
-                    <input type="password" id="new-password" placeholder="Введите новый пароль" style="flex: 1;">
-                    <button class="btn btn-danger" onclick="changeRouterPassword()">Изменить пароль</button>
-                </div>
-            </div>
-            
-            <div class="card">
+            <div id="card-routing-rules" class="card">
                 <h3>Правила маршрутизации (Исключения)</h3>
-                <div style="background: var(--bg); padding: 15px; border-radius: 6px; margin-bottom: 15px; border: 1px solid var(--border);">
-                    <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;">
-                        <div style="flex: 1; min-width: 140px;"><label>IP источника (LAN):</label><input type="text" id="rule-source" placeholder="Пусто = для всех"></div>
-                        <div style="flex: 2; min-width: 180px;"><label>Домены (через запятую):</label><input type="text" id="rule-domain" placeholder="google.com, netflix.com"></div>
-                        <div style="flex: 1; min-width: 140px;"><label>IP назначения:</label><input type="text" id="rule-ip" placeholder="8.8.8.8"></div>
-                        <div style="flex: 1; min-width: 120px;">
+                <div style="background:var(--bg);padding:15px;border-radius:6px;margin-bottom:15px;border:1px solid var(--border)">
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+                        <div style="flex:1;min-width:140px"><label>IP источника (LAN):</label><input type="text" id="rule-source" placeholder="Пусто = для всех"></div>
+                        <div style="flex:2;min-width:180px"><label>Домены (через запятую):</label><input type="text" id="rule-domain" placeholder="google.com, netflix.com"></div>
+                        <div style="flex:1;min-width:140px"><label>IP назначения:</label><input type="text" id="rule-ip" placeholder="8.8.8.8"></div>
+                        <div style="flex:1;min-width:120px">
                             <label>Действие:</label>
                             <select id="rule-outbound"><option value="proxy">Proxy (Туннель)</option><option value="direct">Direct (Напрямую)</option></select>
                         </div>
-                        <button class="btn" onclick="addUserRule()" style="height: 38px; padding: 0 15px;">Добавить</button>
+                        <button class="btn" onclick="addUserRule()" style="height:38px;padding:0 15px">Добавить</button>
                     </div>
                 </div>
                 <table id="rules-table"><thead><tr><th>Источник</th><th>Домены</th><th>IP назначения</th><th>Действие</th><th></th></tr></thead><tbody></tbody></table>
+            </div>
+
+            <div id="card-dns-rules" class="card">
+                <h3>DNS для конкретных доменов</h3>
+                <div style="background:var(--bg);padding:15px;border-radius:6px;margin-bottom:15px;border:1px solid var(--border)">
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+                        <div style="flex:2;min-width:200px"><label>Домены (через запятую):</label><input type="text" id="dns-rule-domain" placeholder="gemini.google.com"></div>
+                        <div style="flex:2;min-width:220px"><label>DNS сервер (DoT/DoH):</label><input type="text" id="dns-rule-server" placeholder="tls://xbox-dns.ru"></div>
+                        <button class="btn" onclick="addDnsRule()" style="height:38px;padding:0 15px">Добавить</button>
+                    </div>
+                </div>
+                <table id="dns-rules-table"><thead><tr><th>Домены</th><th>DNS сервер</th><th></th></tr></thead><tbody></tbody></table>
             </div>
         </div>
     </div>
@@ -159,12 +190,13 @@
         </div>
     </div>
 
-    <div id="tab-dashboard" class="tab-content"><iframe id="dash-frame" src=""></iframe></div>
+
 </div>
 
 <script>
 let ubusToken = "00000000000000000000000000000000";
 let clashSecret = ""; let latencyMap = {}; let statusTimer = null;
+let dirty = false; let currentEnabled = false;
 
 async function toggleNode(sec, newVal) {
     await ubusCall("singbox", "edit_node", { section: sec, node: { enabled: newVal } });
@@ -172,7 +204,37 @@ async function toggleNode(sec, newVal) {
     loadData();
 }
 
-function openEditModal(sec, n) {
+function shareNode(sec) {
+    ubusCall("singbox", "get_config", {}).then(cfg => {
+        const n = (cfg.nodes || {})[sec];
+        if (!n) { alert('Узел не найден'); return; }
+        let uri = '';
+        if (n.type === 'vless') {
+            const params = new URLSearchParams();
+            if (n.security)  params.set('security', n.security);
+            if (n.sni)        params.set('sni', n.sni);
+            if (n.transport)  params.set('type', n.transport);
+            if (n.path)       params.set('path', n.path);
+            uri = `vless://${n.uuid}@${n.server}:${n.server_port}?${params.toString()}#${encodeURIComponent(n.tag || '')}`;
+        } else if (n.type === 'amneziawg' || n.type === 'wireguard') {
+            uri = `[Interface]\nPrivateKey = ${n.private_key || ''}\nAddress = ${n.local_address || ''}\n\n[Peer]\nPublicKey = ${n.peer_public_key || ''}\nEndpoint = ${n.server}:${n.server_port}\nAllowedIPs = 0.0.0.0/0, ::/0\n`;
+        } else {
+            alert('Экспорт для этого типа узла не поддерживается');
+            return;
+        }
+        navigator.clipboard?.writeText(uri).catch(() => {});
+        const blob = new Blob([uri], { type: 'text/plain' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = (n.tag || 'node') + (n.type === 'vless' ? '.txt' : '.conf');
+        a.click();
+        alert('Ссылка/конфиг скопирован в буфер обмена и скачан');
+    });
+}
+
+function openEditModal(btnEl) {
+    const sec = btnEl.getAttribute('data-sec');
+    const n   = JSON.parse(btnEl.getAttribute('data-node'));
     document.getElementById('edit-section').value = sec;
     document.getElementById('edit-type').value    = n.type;
     document.getElementById('edit-tag').value     = n.tag    || '';
@@ -299,60 +361,144 @@ function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt
 async function updateStatus() {
     const s = await ubusCall("singbox", "status");
     const pill = document.getElementById('pill-core');
-    pill.textContent = "Ядро: " + (s.running ? "Запущен" : "Остановлен");
+    pill.textContent = "Ядро: " + (s.running ? "Запущено" : "Остановлено");
     pill.className   = "status-pill" + (s.running ? " running" : "");
-    document.getElementById('pill-sub').textContent = s.sub_updating ? "Подписки: обновление..." : "Подписки: ожидание";
 
-    if (!clashSecret || !s.running) return;
-    try {
-        const r = await fetch(`http://${location.hostname}:9090/proxies`, { headers: { 'Authorization': `Bearer ${clashSecret}` } });
-        const data = await r.json();
-        const proxies = data.proxies || {};
-        const group = proxies['proxy'] || proxies['auto'];
-        
-        if (group?.now) {
-            const nodePill = document.getElementById('pill-node');
-            nodePill.style.display = 'inline-block';
-            const effectiveName = group.now === 'proxy-auto'
-                ? (proxies['proxy-auto']?.now || 'proxy-auto')
-                : group.now;
-            nodePill.textContent = '▶ ' + effectiveName;
-        }
+    if (s.sb_version) {
+        const p = document.getElementById('pill-sb-ver');
+        p.style.display = 'inline-block';
+        p.textContent = 'sing-box ' + s.sb_version;
+    }
+    const dbPill = document.getElementById('pill-db-mtime');
+    if (s.db_mtime) {
+        dbPill.style.display = 'inline-block';
+        const d = new Date(parseInt(s.db_mtime, 10) * 1000);
+        dbPill.textContent = (s.db_label || 'Базы') + ': ' + d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' });
+    } else {
+        dbPill.style.display = 'none';
+    }
 
-        const newMap = {};
-        for (const [name, p] of Object.entries(proxies)) {
-            if (p.history?.length > 0 && p.history[p.history.length - 1].delay) newMap[name] = p.history[p.history.length - 1].delay;
-        }
-        latencyMap = newMap;
-        refreshLatencyInTable();
-    } catch(e) { }
+    currentEnabled = !!s.running;
+    const btn = document.getElementById('btn-toggle');
+    if (!dirty) {
+        btn.textContent = currentEnabled ? '● Прокси активен' : '○ Прокси выключен';
+        btn.className = 'btn ' + (currentEnabled ? 'btn-success' : 'toggle-off');
+    }
 }
 
 function latencyBadge(tagWithPrefix) {
-    let ms = null;
-    for (const [k, v] of Object.entries(latencyMap)) { if (k.endsWith(tagWithPrefix) || k === tagWithPrefix) { ms = v; break; } }
-    if (!ms) return `<span class="latency lat-none">—</span>`;
-    const cls = ms < 150 ? 'lat-good' : ms < 400 ? 'lat-ok' : 'lat-bad';
-    return `<span class="latency ${cls}">${ms} ms</span>`;
+    return `<span class="latency lat-none">—</span>`;
 }
 function refreshLatencyInTable() { document.querySelectorAll('[data-node-tag]').forEach(cell => { cell.innerHTML = latencyBadge(cell.dataset.nodeTag); }); }
+
+async function toggleEnabled() {
+    const newVal = currentEnabled ? "0" : "1";
+    await ubusCall("singbox", "set_settings", { settings: { enabled: newVal } });
+    await ubusCall("singbox", "apply");
+    dirty = false;
+    await updateStatus();
+}
+
+async function checkConnectivity() {
+    const btn = event.target;
+    const orig = btn.textContent;
+    btn.textContent = 'Проверка...'; btn.disabled = true;
+    try {
+        const r = await ubusCall("singbox", "check_connectivity");
+        alert(r.reachable ? `rutracker.org доступен (HTTP ${r.http_code})` : `rutracker.org недоступен (код: ${r.http_code || 'нет ответа'})`);
+    } catch(e) { alert('Ошибка проверки: ' + e); }
+    btn.textContent = orig; btn.disabled = false;
+}
+
+async function downloadConfig() {
+    try {
+        const r = await ubusCall("singbox", "get_running_config");
+        if (r.error) { alert(r.error); return; }
+        const blob = new Blob([r.config], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'sing-box_running.json';
+        a.click();
+    } catch(e) { alert('Ошибка: ' + e); }
+}
+
+async function showLog() {
+    try {
+        const r = await ubusCall("singbox", "get_log");
+        alert(r.log || 'Лог пуст');
+    } catch(e) { alert('Ошибка: ' + e); }
+}
+
+function markDirty() {
+    dirty = true;
+    const btn = document.getElementById('btn-toggle');
+    btn.textContent = '⚠ Изменения не применены';
+    btn.className = 'btn toggle-dirty';
+}
+
+window.addEventListener('beforeunload', (e) => {
+    if (dirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
+function setDnsSelectValue(kind, value) {
+    const sel = document.getElementById(kind === 'dns' ? 'cfg-dns-select' : 'cfg-local-dns-select');
+    const txt = document.getElementById(kind === 'dns' ? 'cfg-dns' : 'cfg-local-dns');
+    const known = Array.from(sel.options).some(o => o.value === value);
+    if (known) { sel.value = value; txt.style.display = 'none'; txt.value = value; }
+    else       { sel.value = '__custom__'; txt.style.display = ''; txt.value = value; }
+}
+
+function onDnsSelectChange(kind) {
+    const sel = document.getElementById(kind === 'dns' ? 'cfg-dns-select' : 'cfg-local-dns-select');
+    const txt = document.getElementById(kind === 'dns' ? 'cfg-dns' : 'cfg-local-dns');
+    if (sel.value === '__custom__') { txt.style.display = ''; txt.value = ''; txt.focus(); }
+    else { txt.style.display = 'none'; txt.value = sel.value; }
+    markDirty();
+}
+
+function applyRouteMode() {
+    const mode = document.getElementById('cfg-route-mode').value;
+    const show = (mode === '3') ? '' : 'none';
+    document.getElementById('card-routing-rules').style.display = show;
+    document.getElementById('card-dns-rules').style.display = show;
+}
+
+function onRouteModeChange() {
+    applyRouteMode();
+    markDirty();
+}
+
+async function addDnsRule() {
+    const domain = document.getElementById('dns-rule-domain').value.trim();
+    const server = document.getElementById('dns-rule-server').value.trim();
+    if (!domain || !server) { alert('Заполните домены и DNS сервер'); return; }
+    await ubusCall("singbox", "add_dns_rule", { rule: { domain, server } });
+    document.getElementById('dns-rule-domain').value = '';
+    document.getElementById('dns-rule-server').value = '';
+    await ubusCall("singbox", "apply");
+    loadData();
+    showToast('DNS-правило добавлено и применено');
+}
+
+async function deleteDnsRule(sec) {
+    if (!confirm('Удалить это DNS-правило?')) return;
+    await ubusCall("singbox", "del_dns_rule", { section: sec });
+    await ubusCall("singbox", "apply");
+    loadData();
+    showToast('DNS-правило удалено');
+}
 
 async function loadData() {
     const cfg = await ubusCall("singbox", "get_config");
     if (cfg.error) return;
 
-    document.getElementById('cfg-enabled').checked  = cfg.main?.enabled  === "1";
-    document.getElementById('cfg-port').value       = cfg.main?.tproxy_port || "7893";
-    document.getElementById('cfg-rdbypass').checked = cfg.main?.rdbypass  === "1";
+    document.getElementById('cfg-route-mode').value  = cfg.main?.route_mode  || "3";
     document.getElementById('cfg-failover').checked = cfg.main?.failover  === "1";
-        document.getElementById('cfg-cron').value       = cfg.main?.cron || "0 4 * * 1"; // НОВОЕ
-    document.getElementById('cfg-dns').value        = cfg.main?.custom_dns || "https://dns.cloudflare.com/dns-query";
-    document.getElementById('cfg-local-dns').value  = cfg.main?.local_dns  || "tcp://77.88.8.8";
+    document.getElementById('cfg-cron').value       = cfg.main?.cron_schedule || "0 4 * * 1";
 
-    if (cfg.main?.clash_secret) {
-        clashSecret = cfg.main.clash_secret;
-        document.getElementById('dash-frame').src = `http://${location.hostname}:9090/ui/?hostname=${location.hostname}&port=9090&secret=${encodeURIComponent(clashSecret)}`;
-    }
+    setDnsSelectValue('dns',   cfg.main?.custom_dns || "https://dns.cloudflare.com/dns-query");
+    setDnsSelectValue('local', cfg.main?.local_dns  || "tcp://77.88.8.8");
+    applyRouteMode();
 
     let rHtml = '';
     Object.entries(cfg.custom_rules || {}).forEach(([sec, r]) => {
@@ -363,6 +509,13 @@ async function loadData() {
             <td><button class="btn btn-danger" style="padding:4px 10px" onclick="deleteItem('${esc(sec)}', true)">×</button></td>`;
     });
     document.querySelector('#rules-table tbody').innerHTML = rHtml || '<tr><td colspan="5" style="color:#64748b; text-align:center;">Нет исключений. Работают системные правила.</td></tr>';
+
+    let dnsRuleHtml = '';
+    Object.entries(cfg.dns_rules || {}).forEach(([sec, r]) => {
+        dnsRuleHtml += `<tr><td style="word-break:break-all">${esc(r.domain)}</td><td style="word-break:break-all">${esc(r.server)}</td>
+            <td><button class="btn btn-danger" style="padding:4px 10px" onclick="deleteDnsRule('${esc(sec)}')">×</button></td></tr>`;
+    });
+    document.querySelector('#dns-rules-table tbody').innerHTML = dnsRuleHtml || '<tr><td colspan="3" style="color:#64748b; text-align:center;">Нет DNS-правил для отдельных доменов</td></tr>';
 
     const subCounts = {};
     (cfg.sub_nodes || []).forEach(n => { subCounts[n._subscription] = (subCounts[n._subscription] || 0) + 1; });
@@ -377,13 +530,15 @@ async function loadData() {
     let nodeHtml = '';
     Object.entries(cfg.nodes || {}).forEach(([sec, n]) => {
         const isOff = n.enabled === "0";
+        const nodeDataJson = JSON.stringify(n).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
         nodeHtml += `<tr style="${isOff ? 'opacity:.45' : ''}">
             <td>${esc(n.tag)}</td><td>${esc(n.type)}</td><td>${esc(n.server)}</td><td>${esc(n.server_port)}</td>
             <td data-node-tag="${esc(n.tag)}">${latencyBadge(n.tag)}</td>
             <td style="display:flex;gap:4px;flex-wrap:wrap">
-                <button class="btn btn-sm ${isOff ? 'toggle-off' : 'btn-success'} toggle-btn" onclick="toggleNode('${esc(sec)}','${isOff ? '1' : '0'}')">${isOff ? 'Вкл' : 'Выкл'}</button>
-                <button class="btn btn-sm" onclick="openEditModal('${esc(sec)}',${JSON.stringify(n).replace(/'/g,"&#39;")})">✎</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteItem('${esc(sec)}')">×</button>
+                <button class="btn btn-sm ${isOff ? 'toggle-off' : 'btn-success'}" title="${isOff ? 'Узел отключён' : 'Узел активен'}" onclick="toggleNode('${esc(sec)}','${isOff ? '1' : '0'}')">${isOff ? '○ Выкл' : '● Вкл'}</button>
+                <button class="btn btn-sm" data-sec="${esc(sec)}" data-node="${nodeDataJson}" onclick="openEditModal(this)">✎</button>
+                <button class="btn btn-sm" onclick="shareNode('${esc(sec)}')" title="Поделиться">⇧</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteItem('${esc(sec)}')" title="Удалить">×</button>
             </td></tr>`;
     });
     (cfg.sub_nodes || []).forEach(n => {
@@ -391,6 +546,20 @@ async function loadData() {
     });
     document.querySelector('#nodes-table tbody').innerHTML = nodeHtml || '<tr><td colspan="6" style="color:#64748b">Нет узлов</td></tr>';
     updateStatus();
+}
+
+function showToast(msg) {
+    let t = document.getElementById('singa-toast');
+    if (!t) {
+        t = document.createElement('div');
+        t.id = 'singa-toast';
+        t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--success);color:#fff;padding:10px 20px;border-radius:6px;font-size:.9rem;z-index:2000;box-shadow:0 4px 12px rgba(0,0,0,.3);transition:opacity .3s';
+        document.body.appendChild(t);
+    }
+    t.textContent = msg;
+    t.style.opacity = '1';
+    clearTimeout(t._hideTimer);
+    t._hideTimer = setTimeout(() => { t.style.opacity = '0'; }, 2500);
 }
 
 async function addUserRule() {
@@ -405,16 +574,33 @@ async function addUserRule() {
         document.getElementById('rule-ip').value = '';
         await ubusCall("singbox", "apply");
         loadData();
+        showToast('Правило добавлено и применено');
     }
 }
 
 async function saveSettings() {
+    const dnsVal      = document.getElementById('cfg-dns').value.trim();
+    const localDnsVal = document.getElementById('cfg-local-dns').value.trim();
+    if (document.getElementById('cfg-dns-select').value === '__custom__' && !dnsVal) {
+        alert('Укажите upstream DNS сервер'); return;
+    }
+    if (document.getElementById('cfg-local-dns-select').value === '__custom__' && !localDnsVal) {
+        alert('Укажите local DNS сервер'); return;
+    }
     const btn = document.getElementById('btn-apply'); btn.disabled = true; btn.textContent = 'Применяется...';
     try {
-        await ubusCall("singbox", "set_settings", { settings: { enabled: document.getElementById('cfg-enabled').checked ? "1" : "0", tproxy_port: document.getElementById('cfg-port').value, rdbypass: document.getElementById('cfg-rdbypass').checked ? "1" : "0", failover: document.getElementById('cfg-failover').checked ? "1" : "0", cron: document.getElementById('cfg-cron').value, custom_dns: document.getElementById('cfg-dns').value, local_dns: document.getElementById('cfg-local-dns').value }});
+        await ubusCall("singbox", "set_settings", { settings: {
+            route_mode: document.getElementById('cfg-route-mode').value,
+            failover: document.getElementById('cfg-failover').checked ? "1" : "0",
+            cron_schedule: document.getElementById('cfg-cron').value,
+            custom_dns: dnsVal || "https://dns.cloudflare.com/dns-query",
+            local_dns: localDnsVal || "tcp://77.88.8.8"
+        }});
         const res = await ubusCall("singbox", "apply");
         alert(res.error ? ('Ошибка: ' + (res.error)) : 'Успешно применено!');
+        dirty = false;
         loadData();
+        updateStatus();
     } finally { btn.disabled = false; btn.textContent = 'Применить конфигурацию'; }
 }
 
@@ -446,6 +632,7 @@ async function deleteItem(sec, isRule = false) {
     }
     await ubusCall("singbox", "apply"); 
     loadData();
+    showToast(isRule ? 'Правило удалено' : 'Узел удалён');
 }
 
 // ── Универсальный Импорт: .vpn (JSON) & .conf (INI) ──
@@ -553,21 +740,6 @@ async function importVpnFile(e) {
         loadData();
     } catch(err) {
         alert('Ошибка импорта: ' + err.message);
-    }
-}
-
-// ── Смена системного пароля ──
-async function changeRouterPassword() {
-    const pwd = document.getElementById('new-password').value;
-    if (!pwd) { alert("Пароль не может быть пустым!"); return; }
-    if (!confirm("Вы уверены? Это изменит системный пароль роутера (root).")) return;
-    
-    const res = await ubusCall("singbox", "change_password", { password: pwd });
-    if (res.error) {
-        alert("Ошибка: " + res.error);
-    } else {
-        alert("Пароль успешно изменен! При следующем входе используйте новый пароль.");
-        document.getElementById('new-password').value = '';
     }
 }
 
