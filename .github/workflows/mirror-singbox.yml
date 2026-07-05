@@ -54,3 +54,16 @@ jobs:
             Automated mirror of Leadaxe/sing-box-lx ${{ steps.upstream.outputs.tag }}
             ${{ steps.upstream.outputs.body }}
           files: "*.tar.gz"
+
+      - name: Prune older mirrored releases
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          KEEP="${{ steps.upstream.outputs.tag }}"
+          gh release list --repo "${{ github.repository }}" --json tagName,name --jq \
+            '.[] | select(.name | startswith("sing-box-lx ")) | select(.tagName != "'"$KEEP"'") | .tagName' \
+          | while read -r OLD_TAG; do
+              echo "Removing superseded mirror: ${OLD_TAG}"
+              gh release delete "${OLD_TAG}" --repo "${{ github.repository }}" --yes --cleanup-tag
+            done
