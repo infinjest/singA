@@ -13,6 +13,7 @@ GITHUB_USER="infinjest"
 REPO_NAME="singA"
 BRANCH="main"
 RAW_BASE="https://raw.githubusercontent.com/${GITHUB_USER}/${REPO_NAME}/${BRANCH}"
+SINGA_VERSION="0.10.2"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 log() { echo "[singA] $*"; }
@@ -157,7 +158,11 @@ deploy_utility "src/sbin--singbox-sub-updater.sh" "/usr/sbin/singbox-sub-updater
 deploy_utility "src/initd--sing-box.sh"           "/etc/init.d/sing-box"             "755"
 deploy_utility "src/etc-singbox--update-rules.sh" "${SING_BOX_DIR}/update-rules.sh"  "755"
 deploy_utility "src/www--singbox.html"            "${WWW_DIR}/singbox.html"           "644"
-deploy_utility "test.sh"       "/usr/sbin/test.sh"            "755"
+if [ "$DRY_RUN" != "1" ]; then
+    sed -i "s/@@SINGA_VERSION@@/${SINGA_VERSION}/g" "${WWW_DIR}/singbox.html"
+fi
+deploy_utility "integrity-test.sh"          "/usr/sbin/singbox-integrity-test"    "755"
+deploy_utility "compiler-test.sh"           "/usr/sbin/singbox-compiler-test"     "755"
 deploy_utility "uninstall.sh"  "/usr/sbin/singbox-uninstall"  "755"
 ok "Core files and automation utilities installed successfully"
 
@@ -176,8 +181,9 @@ cat > "${ACL_DIR}/singbox.json" << 'EOF'
       "ubus": { "singbox": [
         "add_node", "edit_node", "del_node", "set_settings",
         "add_rule", "del_rule", "set_rules",
+        "add_dns_rule", "del_dns_rule",
         "add_subscription", "update_sub",
-        "apply", "change_password"
+        "apply", "check_connectivity", "get_running_config", "get_log"
       ]},
       "uci": { "singbox": ["*"] }
     }
@@ -196,11 +202,11 @@ if command -v uci >/dev/null 2>&1; then
             uci batch << 'UCI'
 set singbox.main=main
 set singbox.main.enabled=0
-set singbox.main.tproxy_port=7893
-set singbox.main.rdbypass=0
+set singbox.main.route_mode=3
 set singbox.main.failover=0
 set singbox.main.custom_dns=https://dns.cloudflare.com/dns-query
 set singbox.main.local_dns=tcp://77.88.8.8
+set singbox.main.cron_schedule=0 4 * * 1
 commit singbox
 UCI
         else
@@ -208,7 +214,23 @@ UCI
         fi
         ok "Default config created"
     else
-        ok "Existing config preserved (not overwritten)"
+        # Upgrade — migrate rdbypass → route_mode if needed
+        if [ -z "$(uci -q get singbox.main.route_mode 2>/dev/null)" ]; then
+            rdbypass=$(uci -q get singbox.main.rdbypass 2>/dev/null || echo "0")
+            if [ "$rdbypass" = "1" ]; then
+                uci set singbox.main.route_mode=3
+            else
+                uci set singbox.main.route_mode=4
+            fi
+            uci -q delete singbox.main.rdbypass   2>/dev/null || true
+            uci -q delete singbox.main.tproxy_port 2>/dev/null || true
+            [ -z "$(uci -q get singbox.main.cron_schedule 2>/dev/null)" ] && \
+                uci set singbox.main.cron_schedule="0 4 * * 1"
+            uci commit singbox
+            ok "Migrated: rdbypass → route_mode=$(uci -q get singbox.main.route_mode)"
+        else
+            ok "Existing config up to date (route_mode=$(uci -q get singbox.main.route_mode))"
+        fi
     fi
 else
     echo "        ~ Skipping UCI setup (command 'uci' not found — pure Docker context?)"
@@ -279,7 +301,8 @@ echo "  singA installed successfully"
 echo "  → http://${LAN_IP}:${UI_PORT}/singbox.html"
 echo ""
 echo "  Полезные команды:"
-echo "  Запуск интеграционных тестов:  sh /usr/sbin/test.sh"
+echo "  Запуск интеграционных тестов:  sh /usr/sbin/singbox-integrity-test"
+echo "  Проверка JSON для всех режимов: sh /usr/sbin/singbox-compiler-test"
 echo "  Полное, бесследное удаление:   sh /usr/sbin/singbox-uninstall"
 fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

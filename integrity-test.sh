@@ -1,7 +1,7 @@
 #!/bin/sh
-# singA — Integration Test Suite
-# Run on router after install.sh: sh test.sh
-# Usage: sh test.sh [--verbose]
+# singA — Integration Test Suite (filesystem, UCI, RPCD, network, web UI)
+# Run on router after install.sh: sh integrity-test.sh
+# Usage: sh integrity-test.sh [--verbose]
 
 VERBOSE=0
 [ "$1" = "--verbose" ] && VERBOSE=1
@@ -101,7 +101,7 @@ fi
 # ── 3. UCI config ─────────────────────────────────────────────────────────────
 section "UCI config"
 
-for key in enabled tproxy_port rdbypass failover custom_dns local_dns; do
+for key in enabled route_mode failover custom_dns local_dns cron_schedule; do
     VAL=$(uci -q get singbox.main.$key)
     if [ -n "$VAL" ]; then
         ok "singbox.main.$key = $VAL"
@@ -136,7 +136,7 @@ fi
 
 # get_config returns main section
 RES=$(ubus_call "get_config" "{}")
-if echo "$RES" | grep -q "tproxy_port"; then
+if echo "$RES" | grep -q "route_mode"; then
     ok "get_config returns main config"
 else
     fail "get_config missing main section" "$RES"
@@ -147,6 +147,13 @@ if echo "$RES" | grep -q "custom_rules"; then
     ok "get_config returns custom_rules"
 else
     fail "get_config missing custom_rules" "$RES"
+fi
+
+# get_config returns dns_rules key
+if echo "$RES" | grep -q "dns_rules"; then
+    ok "get_config returns dns_rules"
+else
+    fail "get_config missing dns_rules" "$RES"
 fi
 
 # add_node rejects empty input
@@ -165,12 +172,20 @@ else
     fail "add_rule accepted rule without outbound" "$RES"
 fi
 
-# change_password rejects empty password
-RES=$(ubus_call "change_password" '{"password":""}')
+# add_dns_rule rejects empty domain/server
+RES=$(ubus_call "add_dns_rule" '{"rule":{"domain":"","server":""}}')
 if echo "$RES" | grep -q "error"; then
-    ok "change_password rejects empty password"
+    ok "add_dns_rule rejects empty domain/server"
 else
-    fail "change_password accepted empty password" "$RES"
+    fail "add_dns_rule accepted empty domain/server" "$RES"
+fi
+
+# add_rule rejects invalid outbound value
+RES=$(ubus_call "add_rule" '{"rule":{"domain":"test.com","outbound":"garbage"}}')
+if echo "$RES" | grep -q "error"; then
+    ok "add_rule validates outbound value"
+else
+    fail "add_rule accepted invalid outbound" "$RES"
 fi
 
 # ── 5. Compiler ───────────────────────────────────────────────────────────────
@@ -245,20 +260,46 @@ fi
 # ── 8. Blocklists ─────────────────────────────────────────────────────────────
 section "Blocklists"
 
-for f in ru-blocked.srs geoip-ru-blocked.srs; do
-    if [ -f "/etc/sing-box/$f" ] && [ -s "/etc/sing-box/$f" ]; then
-        SIZE=$(wc -c < "/etc/sing-box/$f")
-        ok "$f present (${SIZE} bytes)"
+ROUTE_MODE=$(uci -q get singbox.main.route_mode 2>/dev/null || echo "3")
+if [ "$ROUTE_MODE" = "3" ]; then
+    for f in ru-blocked.srs geoip-ru-blocked.srs; do
+        if [ -f "/etc/sing-box/$f" ] && [ -s "/etc/sing-box/$f" ]; then
+            SIZE=$(wc -c < "/etc/sing-box/$f")
+            ok "$f present (${SIZE} bytes)"
+        else
+            fail "$f missing or empty — run update-rules.sh"
+        fi
+    done
+    if [ -f "/etc/sing-box/geosite-ru.srs" ]; then
+        fail "geosite-ru.srs present alongside mode-3 files (should be removed)"
     else
-        fail "$f missing or empty — run update-rules.sh"
+        ok "geosite-ru.srs absent (correct for route_mode=3)"
     fi
-done
+elif [ "$ROUTE_MODE" = "2" ]; then
+    if [ -f "/etc/sing-box/geosite-ru.srs" ] && [ -s "/etc/sing-box/geosite-ru.srs" ]; then
+        SIZE=$(wc -c < "/etc/sing-box/geosite-ru.srs")
+        ok "geosite-ru.srs present (${SIZE} bytes)"
+    else
+        fail "geosite-ru.srs missing or empty — run update-rules.sh"
+    fi
+    for f in ru-blocked.srs geoip-ru-blocked.srs; do
+        if [ -f "/etc/sing-box/$f" ]; then
+            fail "$f present alongside mode-2 file (should be removed)"
+        else
+            ok "$f absent (correct for route_mode=2)"
+        fi
+    done
+else
+    skip "route_mode=$ROUTE_MODE — no SRS files expected"
+fi
 
 if crontab -l 2>/dev/null | grep -q "update-rules.sh"; then
     ok "Cron job for blocklist updates present"
 else
     fail "Cron job missing"
 fi
+
+ylw "  ~ Run 'sh /usr/sbin/singbox-compiler-test' separately to validate compiler output for all 4 route modes"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""

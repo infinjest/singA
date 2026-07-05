@@ -51,15 +51,36 @@ local sb = {
 local enabled = uci:get("singbox", "main", "enabled") or "0"
 if enabled ~= "1" then os.exit(0) end
 
-local tproxy_port = tonumber(uci:get("singbox", "main", "tproxy_port")) or 7893
-sb.inbounds[1].listen_port = tproxy_port
-local rdbypass   = uci:get("singbox", "main", "rdbypass")   or "0"
+local route_mode = uci:get("singbox", "main", "route_mode") or "3"
 local failover   = uci:get("singbox", "main", "failover")   or "0"
 local custom_dns = uci:get("singbox", "main", "custom_dns") or "https://dns.cloudflare.com/dns-query"
 local local_dns  = uci:get("singbox", "main", "local_dns")  or "tcp://77.88.8.8"
+if custom_dns == "" then custom_dns = "https://dns.cloudflare.com/dns-query" end
+if local_dns  == "" then local_dns  = "tcp://77.88.8.8" end
 
-table.insert(sb.dns.servers, { tag = "dns-remote", address = custom_dns, detour = "proxy", address_resolver = "dns-local" })
-table.insert(sb.dns.servers, { tag = "dns-local", address = local_dns, detour = "direct" })
+-- Режимы 1 и 2: final=proxy; режимы 3 и 4: final=direct
+if route_mode == "1" or route_mode == "2" then
+    sb.route.final = "proxy"
+    sb.dns.final   = "dns-remote"
+else
+    sb.route.final = "direct"
+    sb.dns.final   = "dns-local"
+end
+sb.route.default_domain_resolver = "dns-local"
+
+-- Парсер адреса DNS-сервера → новый формат sing-box 1.12+
+-- "https://dns.cloudflare.com/dns-query" → { type="https", server="dns.cloudflare.com" }
+-- "tcp://77.88.8.8" → { type="tcp", server="77.88.8.8" }
+local function build_dns_server(tag, addr, detour, resolver_tag)
+    local scheme, server = addr:match("^(%a[%a%d]*)://([^/]+)")
+    if not scheme then scheme = "udp"; server = addr end
+    local obj = { type = scheme, tag = tag, server = server, detour = detour }
+    if resolver_tag then obj.domain_resolver = resolver_tag end
+    return obj
+end
+
+table.insert(sb.dns.servers, build_dns_server("dns-remote", custom_dns, "proxy",  "dns-local"))
+table.insert(sb.dns.servers, build_dns_server("dns-local",  local_dns,  "direct", nil))
 
 local function build_outbound(s, tag)
     local o = {
@@ -244,11 +265,23 @@ local rt_geo    = {}
 local dns_custom = {}
 local dns_force  = {}
 local dns_geo    = {}
-local dns_base   = {
-    { outbound = "direct", server = "dns-local", disable_cache = true }
-}
+local dns_base   = {}
+
+-- Priority 0: domain-specific DNS servers (dns_rule секции) — только режим 3
+local dns_domain = {}
+if route_mode == "3" then
+uci:foreach("singbox", "dns_rule", function(r)
+    if not (r.domain and r.domain ~= "" and r.server and r.server ~= "") then return end
+    local srv_tag = "dns-domain-" .. (r[".name"] or tostring(#dns_domain + 1))
+    table.insert(sb.dns.servers, build_dns_server(srv_tag, r.server, "direct", nil))
+    local dns_item = { server = srv_tag, domain_suffix = {} }
+    for d in r.domain:gmatch("[^, ]+") do table.insert(dns_item.domain_suffix, d) end
+    table.insert(dns_domain, dns_item)
+end)
+end
 
 -- Priority 1: user routing matrix
+if route_mode == "3" then
 uci:foreach("singbox", "custom_rule", function(r)
     local rule_item = {}
     local dns_item  = {}
@@ -281,6 +314,7 @@ uci:foreach("singbox", "custom_rule", function(r)
         end
     end
 end)
+end
 
 -- Priority 2: force_proxy / force_direct
 uci:foreach("singbox", "rule", function(r)
@@ -296,29 +330,50 @@ uci:foreach("singbox", "rule", function(r)
     end
 end)
 
--- Priority 3: geo-blocked lists
-if rdbypass == "1" then
-    local ru_path = "/etc/sing-box/ru-blocked.srs"
-    local geoip_path = "/etc/sing-box/geoip-ru-blocked.srs"
-    
+-- Priority 3: geo-blocked lists (зависит от route_mode)
+if route_mode == "2" then
+    -- Режим 2: все в proxy кроме РУ → geosite-ru.srs → direct
+    local ru_path = "/etc/sing-box/geosite-ru.srs"
     local f_ru = io.open(ru_path, "r")
-    local f_geo = io.open(geoip_path, "r")
-    
-    if f_ru and f_geo then
+    if f_ru then
         f_ru:close()
-        f_geo:close()
         sb.route.rule_set = {
-            { tag = "geosite-blocked", type = "local", format = "binary", path = ru_path },
+            { tag = "geosite-ru", type = "local", format = "binary", path = ru_path }
+        }
+        table.insert(rt_geo,  { rule_set = { "geosite-ru" }, outbound = "direct" })
+        table.insert(dns_geo, { rule_set = { "geosite-ru" }, server   = "dns-local" })
+    else
+        os.execute("logger -t singbox-compiler 'WARNING: geosite-ru.srs missing — mode 2 geo rules skipped'")
+    end
+elseif route_mode == "3" then
+    -- Режим 3: обход РКН → ru-blocked + geoip-ru-blocked → proxy
+    local ru_path    = "/etc/sing-box/ru-blocked.srs"
+    local geoip_path = "/etc/sing-box/geoip-ru-blocked.srs"
+    local f_ru  = io.open(ru_path,    "r")
+    local f_geo = io.open(geoip_path, "r")
+    if f_ru and f_geo then
+        f_ru:close(); f_geo:close()
+        sb.route.rule_set = {
+            { tag = "geosite-blocked", type = "local", format = "binary", path = ru_path    },
             { tag = "geoip-blocked",   type = "local", format = "binary", path = geoip_path }
         }
-        table.insert(rt_geo,  { rule_set = { "geosite-blocked", "geoip-blocked" }, outbound = "proxy" })
+        table.insert(rt_geo, { rule_set = { "geosite-blocked" }, outbound = "proxy" })
+        table.insert(rt_geo, {
+            type = "logical", mode = "and",
+            rules = {
+                { protocol = { "tls", "http", "quic" }, invert = true },
+                { rule_set = { "geoip-blocked" } }
+            },
+            outbound = "proxy"
+        })
         table.insert(dns_geo, { rule_set = { "geosite-blocked" }, server = "dns-remote" })
     else
-        if f_ru then f_ru:close() end
+        if f_ru  then f_ru:close()  end
         if f_geo then f_geo:close() end
-        os.execute("logger -t singbox-compiler 'WARNING: SRS files missing. RDBypass rules skipped.'")
+        os.execute("logger -t singbox-compiler 'WARNING: SRS files missing — mode 3 geo rules skipped'")
     end
 end
+-- Режимы 1 и 4: geo-правила не нужны
 
 sb.route.rules = { { action = "sniff" }, { protocol = "dns", action = "hijack-dns" } }
 for _, r in ipairs(rt_custom) do table.insert(sb.route.rules, r) end
@@ -326,6 +381,7 @@ for _, r in ipairs(rt_force)  do table.insert(sb.route.rules, r) end
 for _, r in ipairs(rt_geo)    do table.insert(sb.route.rules, r) end
 
 sb.dns.rules = {}
+for _, r in ipairs(dns_domain) do table.insert(sb.dns.rules, r) end
 for _, r in ipairs(dns_custom) do table.insert(sb.dns.rules, r) end
 for _, r in ipairs(dns_force)  do table.insert(sb.dns.rules, r) end
 for _, r in ipairs(dns_geo)    do table.insert(sb.dns.rules, r) end
