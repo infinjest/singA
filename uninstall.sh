@@ -38,14 +38,20 @@ if uci -q get uhttpd.singbox >/dev/null 2>&1; then
     uci delete uhttpd.singbox
     uci commit uhttpd
 fi
-rm -f /etc/config/singbox
+if [ "$1" = "--purge" ]; then
+    rm -f /etc/config/singbox
+    echo "[*] Конфигурация /etc/config/singbox удалена (--purge)"
+else
+    echo "[*] Конфигурация /etc/config/singbox сохранена (используйте --purge для полного удаления настроек)"
+fi
 
 # 4. Удаление бинарных файлов, плагинов и фронтенда
 echo "[*] Удаление исполняемых файлов и Web UI..."
 rm -f /usr/bin/sing-box
 rm -f /usr/sbin/singbox-compiler
 rm -f /usr/sbin/singbox-sub-updater
-rm -f /usr/sbin/test.sh
+rm -f /usr/sbin/singbox-integrity-test
+rm -f /usr/sbin/singbox-compiler-test
 rm -f /usr/libexec/rpcd/singbox
 rm -f /usr/share/rpcd/acl.d/singbox.json
 rm -rf /www/singbox

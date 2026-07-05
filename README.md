@@ -15,11 +15,12 @@ sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install
 - VLESS + Reality + xhttp — импорт по ссылке `vless://`
 
 **Маршрутизация**
-- По умолчанию трафик идёт напрямую; в туннель уходят только ресурсы из баз РКН
-- Исключения по IP устройства, домену или IP назначения
+- 4 режима (`route_mode`): всё в proxy / всё в proxy кроме РФ-доменов / обход РКН-блокировок (дефолт) / всё в direct
+- Исключения по IP устройства, домену или IP назначения (только в режиме «обход РКН»)
 
 **DNS**
 - Заблокированные домены резолвятся через DoH внутри туннеля, остальные — через локальный резолвер
+- Кастомный DNS-сервер для отдельных доменов (только в режиме «обход РКН»)
 - Не конфликтует с AdGuard Home
 
 **Управление**
@@ -45,8 +46,9 @@ sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install
 После установки:
 
 ```sh
-sh /usr/sbin/test.sh          # интеграционные тесты
-sh /usr/sbin/singbox-uninstall  # полное удаление
+sh /usr/sbin/singbox-integrity-test   # интеграционные тесты
+sh /usr/sbin/singbox-compiler-test    # проверка JSON для всех route_mode
+sh /usr/sbin/singbox-uninstall        # полное удаление (используйте --purge для удаления и UCI-конфига)
 ```
 
 ---
@@ -59,7 +61,8 @@ sh /usr/sbin/singbox-uninstall  # полное удаление
 | nftables TProxy | перехват трафика |
 | RPCD + UCI | API и хранение конфигурации |
 | Vanilla JS SPA | веб-интерфейс |
-| [runetfreedom/russia-v2ray-rules-dat](https://github.com/runetfreedom/russia-v2ray-rules-dat) | базы блокировок РКН (geosite/geoip .srs) |
+| [runetfreedom/russia-v2ray-rules-dat](https://github.com/runetfreedom/russia-v2ray-rules-dat) | базы РКН (geosite/geoip .srs) для route_mode=3 (обход РКН-блокировок) |
+| [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat) | база `geosite:ru` для route_mode=2 (всё в proxy кроме РФ-доменов) |
 
 ---
 
@@ -71,7 +74,7 @@ sh /usr/sbin/singbox-uninstall  # полное удаление
 |------|------|------------|
 | `initd--sing-box.sh` | `/etc/init.d/sing-box` | procd-сервис: создаёт tmpfs-директории, синхронизирует подписки при первом старте, запускает компилятор и sing-box, асинхронно поднимает nftables TProxy |
 | `sbin--singbox-compiler.lua` | `/usr/sbin/singbox-compiler` | транслятор UCI → JSON-конфиг sing-box: читает узлы, правила, DNS из UCI/sub_cache, атомарно записывает результат |
-| `rpcd--singbox.lua` | `/usr/libexec/rpcd/singbox` | RPCD-плагин, API веб-интерфейса через ubus: status, get_config, add/edit/del_node, add_rule, apply, change_password; запускается по запросу |
+| `rpcd--singbox.lua` | `/usr/libexec/rpcd/singbox` | RPCD-плагин, API веб-интерфейса через ubus: status, get_config, add/edit/del_node, add_rule, add_dns_rule, apply, check_connectivity, get_running_config, get_log; запускается по запросу |
 | `sbin--singbox-sub-updater.sh` | `/usr/sbin/singbox-sub-updater` | загрузчик подписок: скачивает VLESS/AWG/WireGuard по URL из UCI, парсит в узлы, кэширует JSON в tmpfs |
 | `etc-singbox--update-rules.sh` | `/etc/sing-box/update-rules.sh` | обновление баз РКН: скачивает `.srs` из russia-v2ray-rules-dat, перезапускает sing-box; запускается по cron раз в неделю |
 | `www--singbox.html` | `/www/singbox/singbox.html` | одностраничный UI (порт 1104): авторизация через ubus session.login, управление узлами/правилами/подписками |
@@ -89,8 +92,9 @@ sh /usr/sbin/singbox-uninstall  # полное удаление
 ├── 📁 init.d
 │   └── sing-box
 └── 📁 sing-box
-    ├── geoip-ru-blocked.srs
-    ├── ru-blocked.srs
+    ├── geoip-ru-blocked.srs   # route_mode=3 (runetfreedom)
+    ├── ru-blocked.srs         # route_mode=3 (runetfreedom)
+    ├── geosite-ru.srs         # route_mode=2 (MetaCubeX), взаимоисключающе с файлами выше
     ├── update-rules.sh
     └── sub_cache → /var/run/sing-box/sub_cache
 
@@ -101,7 +105,8 @@ sh /usr/sbin/singbox-uninstall  # полное удаление
 │   ├── singbox-compiler
 │   ├── singbox-sub-updater
 │   ├── singbox-uninstall
-│   └── test.sh
+│   ├── singbox-integrity-test
+│   └── singbox-compiler-test
 ├── 📁 libexec/rpcd
 │   └── singbox
 └── 📁 share/rpcd/acl.d
