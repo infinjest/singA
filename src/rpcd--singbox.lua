@@ -8,7 +8,7 @@ local method = arg[1]
 local action = arg[2]
 
 if method == "list" then
-    print('{"status":{},"get_config":{},"add_node":{"node":"table"},"del_node":{"section":"string"},"edit_node":{"section":"string","node":"table"},"set_settings":{"settings":"table"},"add_rule":{"rule":"table"},"del_rule":{"section":"string"},"set_rules":{"force_proxy":"table","force_direct":"table"},"add_dns_rule":{"rule":"table"},"del_dns_rule":{"section":"string"},"add_subscription":{"label":"string","url":"string"},"update_sub":{"section":"string"},"apply":{},"check_connectivity":{},"get_running_config":{},"get_log":{}}')
+    print('{"status":{},"get_config":{},"add_node":{"node":"table"},"del_node":{"section":"string"},"edit_node":{"section":"string","node":"table"},"set_settings":{"settings":"table"},"add_rule":{"rule":"table"},"del_rule":{"section":"string"},"set_rules":{"force_proxy":"table","force_direct":"table"},"add_dns_rule":{"rule":"table"},"del_dns_rule":{"section":"string"},"add_subscription":{"label":"string","url":"string"},"update_sub":{"section":"string"},"apply":{},"check_connectivity":{},"get_running_config":{},"get_log":{},"get_active_node":{}}')
     os.exit(0)
 end
 
@@ -96,6 +96,31 @@ elseif action == "add_rule" then
     if type(req.rule) ~= "table" or not req.rule.outbound then respond({ error = "Invalid rule data" }) end
     if req.rule.outbound ~= "proxy" and req.rule.outbound ~= "direct" then
         respond({ error = "outbound must be 'proxy' or 'direct'" })
+    end
+    -- Скачиваем недостающие geosite:<category> rule-set'ы (MetaCubeX/meta-rules-dat, sing-box формат)
+    if req.rule.domain then
+        os.execute("mkdir -p /etc/sing-box/rule-sets")
+        for cat in tostring(req.rule.domain):gmatch("geosite:([%w%-%_%.]+)") do
+            local safe_cat = cat:gsub("[^%w%-%_%.]", "")
+            local dest = "/etc/sing-box/rule-sets/geosite-" .. safe_cat .. ".srs"
+            local f = io.open(dest, "r")
+            if f then
+                f:close()
+            else
+                local tmp = dest .. ".tmp"
+                local url = "https://github.com/MetaCubeX/meta-rules-dat/raw/sing/geo/geosite/" .. safe_cat .. ".srs"
+                os.execute("wget -q -T 15 -O '" .. tmp .. "' '" .. url .. "' 2>/dev/null")
+                local tf = io.open(tmp, "r")
+                local size = tf and tf:seek("end") or 0
+                if tf then tf:close() end
+                if size and size > 8 then
+                    os.execute("mv '" .. tmp .. "' '" .. dest .. "'")
+                else
+                    os.execute("rm -f '" .. tmp .. "'")
+                    respond({ error = "Категория geosite:" .. safe_cat .. " не найдена или недоступна" })
+                end
+            end
+        end
     end
     local allowed = { source = true, domain = true, ip = true, outbound = true }
     local sname = uci:add("singbox", "custom_rule")
@@ -189,7 +214,7 @@ elseif action == "edit_node" then
     respond({ status = "ok" })
 
 elseif action == "set_settings" then
-    local allowed = { enabled=true, route_mode=true, custom_dns=true, local_dns=true, failover=true, cron_schedule=true }
+    local allowed = { enabled=true, route_mode=true, custom_dns=true, local_dns=true, cron_schedule=true, dns_remote_detour=true }
     local old_mode = uci:get("singbox", "main", "route_mode") or "3"
     local new_mode = (req.settings or {}).route_mode
     for k, v in pairs(req.settings or {}) do
@@ -211,9 +236,8 @@ elseif action == "set_settings" then
     end
     os.execute("/etc/init.d/cron restart 2>/dev/null")
 
-    -- При смене route_mode обновляем SRS в фоне
-    if new_mode and new_mode ~= old_mode then
-        os.execute("/etc/sing-box/update-rules.sh </dev/null >/dev/null 2>&1 &")
+    if new_mode and tostring(new_mode) ~= old_mode then
+        os.execute("(/etc/sing-box/update-rules.sh) </dev/null >/dev/null 2>&1 &")
     end
     respond({ status = "ok" })
 
@@ -227,6 +251,7 @@ elseif action == "add_dns_rule" then
     local sname = uci:add("singbox", "dns_rule")
     uci:set("singbox", sname, "domain", (tostring(req.rule.domain):gsub("['\"\\]", "")))
     uci:set("singbox", sname, "server", (tostring(req.rule.server):gsub("['\"\\]", "")))
+    uci:set("singbox", sname, "via_proxy", (req.rule.via_proxy and "1" or "0"))
     uci:save("singbox")
     respond({ status = "ok", section = sname })
 
@@ -236,6 +261,35 @@ elseif action == "del_dns_rule" then
     uci:delete("singbox", req.section)
     uci:save("singbox")
     respond({ status = "ok" })
+
+elseif action == "get_active_node" then
+    local function clash_secret()
+        local s = uci:get("singbox", "main", "clash_secret")
+        if s and s ~= "" then return s end
+        local f = io.open("/var/run/singbox_clash.sec", "r")
+        if f then local v = f:read("*a"):gsub("%s+", ""); f:close(); return v end
+        return ""
+    end
+    local function clash_get(path)
+        local secret = clash_secret()
+        local cmd = "wget -q -T 3 -O - --header='Authorization: Bearer " .. secret .. "' "
+                  .. "'http://127.0.0.1:9090" .. path .. "' 2>/dev/null"
+        local p = io.popen(cmd)
+        if not p then return nil end
+        local body = p:read("*a"); p:close()
+        if not body or body == "" then return nil end
+        local ok, data = pcall(json.parse, body)
+        if not ok then return nil end
+        return data
+    end
+    local proxy = clash_get("/proxies/proxy")
+    if not proxy or not proxy.now then respond({ error = "Clash API недоступен" }) end
+    local now = proxy.now
+    if now == "proxy-auto" then
+        local auto = clash_get("/proxies/proxy-auto")
+        if auto and auto.now then now = auto.now end
+    end
+    respond({ node = now })
 
 elseif action == "check_connectivity" then
     local rc = os.execute("wget -q --spider -T 5 https://rutracker.org >/dev/null 2>&1")
