@@ -221,7 +221,7 @@ set singbox.main.route_mode=3
 set singbox.main.custom_dns=https://dns.cloudflare.com/dns-query
 set singbox.main.local_dns=tcp://77.88.8.8
 set singbox.main.dns_remote_detour=direct
-set singbox.main.cron_schedule=0 4 * * 1
+set singbox.main.cron_schedule="0 4 * * 1"
 commit singbox
 UCI
         else
