@@ -13,7 +13,7 @@ GITHUB_USER="infinjest"
 REPO_NAME="singA"
 BRANCH="main"
 RAW_BASE="https://raw.githubusercontent.com/${GITHUB_USER}/${REPO_NAME}/${BRANCH}"
-SINGA_VERSION="0.10.3"
+SINGA_VERSION="0.10.4"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 log() { echo "[singA] $*"; }

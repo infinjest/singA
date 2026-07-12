@@ -88,7 +88,7 @@
                             <option value="3">3 — Обход РКН (дефолт)</option>
                         </select>
                     </div>
-                    <div class="form-group" style="flex:1;min-width:180px">
+                    <div class="form-group" id="cfg-cron-group" style="flex:1;min-width:180px">
                         <label>Обновление баз</label>
                         <select id="cfg-cron" onchange="markDirty()">
                             <option value="0 4 * * *">Раз в день</option>
@@ -180,8 +180,11 @@
             <table id="sub-table"><thead><tr><th>Имя</th><th>URL</th><th>Узлов</th><th>Действия</th></tr></thead><tbody></tbody></table>
         </div>
         <div class="card">
-            <h3>Узлы</h3>
-            <table id="nodes-table"><thead><tr><th>Тег</th><th>Тип</th><th>Сервер</th><th>Порт</th><th>Latency</th><th></th></tr></thead><tbody></tbody></table>
+            <h3 style="display:flex;justify-content:space-between;align-items:center">
+                <span>Узлы</span>
+                <button class="btn btn-sm" style="background:var(--border)" onclick="toggleAllNodes()">Включить/выключить все узлы</button>
+            </h3>
+            <table id="nodes-table"><thead><tr><th>Тег</th><th>Протокол</th><th>Сервер</th><th>Порт</th><th></th></tr></thead><tbody></tbody></table>
                         <div style="display:flex;gap:8px">
                                 <input type="file" id="vpn-upload-node" style="display:none" accept=".vpn,.conf,.json" onchange="importVpnFile(event)">
                                 <button class="btn btn-success" onclick="document.getElementById('vpn-upload-node').click()">Импорт Файла</button>
@@ -196,13 +199,28 @@
 
 <script>
 let ubusToken = "00000000000000000000000000000000";
-let latencyMap = {}; let statusTimer = null; let loadedRouteMode = null;
+let statusTimer = null; let loadedRouteMode = null;
 let dirty = false; let currentEnabled = false;
 
 async function toggleNode(sec, newVal) {
     await ubusCall("singbox", "edit_node", { section: sec, node: { enabled: newVal } });
     await ubusCall("singbox", "apply");
     loadData();
+}
+
+async function toggleAllNodes() {
+    const cfg = await ubusCall("singbox", "get_config");
+    const entries = Object.entries(cfg.nodes || {});
+    if (entries.length === 0) return;
+    const anyEnabled = entries.some(([, n]) => n.enabled !== "0");
+    const newVal = anyEnabled ? "0" : "1";
+    if (!confirm(anyEnabled ? 'Выключить все узлы?' : 'Включить все узлы?')) return;
+    for (const [sec] of entries) {
+        await ubusCall("singbox", "edit_node", { section: sec, node: { enabled: newVal } });
+    }
+    await ubusCall("singbox", "apply");
+    loadData();
+    showToast(anyEnabled ? 'Все узлы выключены' : 'Все узлы включены');
 }
 
 function shareNode(sec) {
@@ -223,13 +241,11 @@ function shareNode(sec) {
             alert('Экспорт для этого типа узла не поддерживается');
             return;
         }
-        navigator.clipboard?.writeText(uri).catch(() => {});
         const blob = new Blob([uri], { type: 'text/plain' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = (n.tag || 'node') + (n.type === 'vless' ? '.txt' : '.conf');
         a.click();
-        alert('Ссылка/конфиг скопирован в буфер обмена и скачан');
     });
 }
 
@@ -406,13 +422,29 @@ async function updateStatus() {
 
 function prettyNodeTag(tag) {
     if (tag === 'direct') return 'Прямое соединение';
-    return tag.replace(/^(node|sub)_\d+_/, '');
+    let t = tag.replace(/^(node|sub)_\d+_/, '');
+    // Длинный тег (часто из подписки) ломает верстку шапки — берём хвост после # или @
+    const idx = Math.max(t.lastIndexOf('#'), t.lastIndexOf('@'));
+    if (idx !== -1) t = t.substring(idx + 1);
+    return t;
 }
 
-function latencyBadge(tagWithPrefix) {
-    return `<span class="latency lat-none">—</span>`;
+function protoLabel(n) {
+    if (n.type === 'amneziawg') return 'amneziaWG2';
+    if (n.type === 'vless') {
+        const parts = ['vless'];
+        if (n.transport && n.transport !== 'none') parts.push(n.transport);
+        if (n.security  && n.security  !== 'none') parts.push(n.security);
+        return parts.join('-');
+    }
+    return n.type;
 }
-function refreshLatencyInTable() { document.querySelectorAll('[data-node-tag]').forEach(cell => { cell.innerHTML = latencyBadge(cell.dataset.nodeTag); }); }
+
+function maskServer(s) {
+    const p = String(s || '').split('.');
+    if (p.length === 4 && p.every(x => /^\d{1,3}$/.test(x))) return `${p[0]}.*.*.${p[3]}`;
+    return s;
+}
 
 async function toggleEnabled() {
     const newVal = currentEnabled ? "0" : "1";
@@ -484,6 +516,8 @@ function applyRouteMode() {
     const show = (mode === '3') ? '' : 'none';
     document.getElementById('card-routing-rules').style.display = show;
     document.getElementById('card-dns-rules').style.display = show;
+    // Режим 1 ("всё в proxy") не использует базы geosite/geoip — обновлять нечего
+    document.getElementById('cfg-cron-group').style.display = (mode === '1') ? 'none' : '';
 }
 
 function onRouteModeChange() {
@@ -561,8 +595,7 @@ async function loadData() {
         const isOff = n.enabled === "0";
         const nodeDataJson = JSON.stringify(n).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
         nodeHtml += `<tr style="${isOff ? 'opacity:.45' : ''}">
-            <td>${esc(n.tag)}</td><td>${esc(n.type)}</td><td>${esc(n.server)}</td><td>${esc(n.server_port)}</td>
-            <td data-node-tag="${esc(n.tag)}">${latencyBadge(n.tag)}</td>
+            <td>${esc(prettyNodeTag(n.tag))}</td><td>${esc(protoLabel(n))}</td><td>${esc(maskServer(n.server))}</td><td>${esc(n.server_port)}</td>
             <td style="display:flex;gap:4px;flex-wrap:wrap">
                 <button class="btn btn-sm ${isOff ? 'toggle-off' : 'btn-success'}" title="${isOff ? 'Узел отключён' : 'Узел активен'}" onclick="toggleNode('${esc(sec)}','${isOff ? '1' : '0'}')">${isOff ? '○ Выкл' : '● Вкл'}</button>
                 <button class="btn btn-sm" data-sec="${esc(sec)}" data-node="${nodeDataJson}" onclick="openEditModal(this)">✎</button>
@@ -571,9 +604,9 @@ async function loadData() {
             </td></tr>`;
     });
     (cfg.sub_nodes || []).forEach(n => {
-        nodeHtml += `<tr><td>${esc(n.tag)} <span class="sub-badge">${esc(n._sub_label)}</span></td><td>${esc(n.type)}</td><td>${esc(n.server)}</td><td>${esc(n.server_port)}</td><td data-node-tag="${esc(n.tag)}">${latencyBadge(n.tag)}</td><td style="color:#475569">—</td></tr>`;
+        nodeHtml += `<tr><td>${esc(prettyNodeTag(n.tag))} <span class="sub-badge">${esc(n._sub_label)}</span></td><td>${esc(protoLabel(n))}</td><td>${esc(maskServer(n.server))}</td><td>${esc(n.server_port)}</td><td style="color:#475569">—</td></tr>`;
     });
-    document.querySelector('#nodes-table tbody').innerHTML = nodeHtml || '<tr><td colspan="6" style="color:#64748b">Нет узлов</td></tr>';
+    document.querySelector('#nodes-table tbody').innerHTML = nodeHtml || '<tr><td colspan="5" style="color:#64748b">Нет узлов</td></tr>';
     updateStatus();
 }
 
@@ -630,6 +663,8 @@ async function saveSettings() {
         const res = await ubusCall("singbox", "apply");
         if (res.error) {
             alert('Ошибка: ' + res.error);
+        } else if (modeChanged && newMode === '1') {
+            alert('Применено. Режим маршрутизации изменён.');
         } else if (modeChanged) {
             alert('Применено. Режим маршрутизации изменён — базы правил обновляются в фоне, конфигурация перечитается автоматически через 1–3 минуты.');
         } else {
