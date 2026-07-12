@@ -159,7 +159,11 @@ if [ "$DRY_RUN" != "1" ]; then
     if curl -sL --http1.1 --max-time 30 --retry 3 --retry-delay 3 --retry-connrefused \
         "${SRC_TARBALL_URL}" -o /tmp/singa-src.tar.gz; then
         mkdir -p /tmp/singa-src
-        tar -xzf /tmp/singa-src.tar.gz -C /tmp/singa-src --strip-components=1
+        mkdir -p /tmp/singa-src
+        tar -xzf /tmp/singa-src.tar.gz -C /tmp/singa-src
+        TOPDIR=$(find /tmp/singa-src -mindepth 1 -maxdepth 1 -type d | head -1)
+        mv "${TOPDIR}"/* /tmp/singa-src/
+        rmdir "${TOPDIR}"
         SRC="/tmp/singa-src"
         ok "Project files archive downloaded"
     else
