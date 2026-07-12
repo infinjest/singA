@@ -65,5 +65,6 @@ jobs:
             '.[] | select(.name | startswith("sing-box-lx ")) | select(.tagName != "'"$KEEP"'") | .tagName' \
           | while read -r OLD_TAG; do
               echo "Removing superseded mirror: ${OLD_TAG}"
-              gh release delete "${OLD_TAG}" --repo "${{ github.repository }}" --yes --cleanup-tag
+              gh release delete "${OLD_TAG}" --repo "${{ github.repository }}" --yes --cleanup-tag \
+                || echo "::warning::Не удалось удалить релиз/тег ${OLD_TAG} (возможно, тег уже отсутствует)"
             done

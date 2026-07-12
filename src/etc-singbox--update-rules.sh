@@ -4,7 +4,7 @@
 # Поведение определяется singbox.main.route_mode:
 #   Режим 2 → geosite-ru.srs (MetaCubeX), удалить файлы режима 3
 #   Режим 3 → ru-blocked.srs + geoip-ru-blocked.srs (runetfreedom), удалить файлы режима 2
-#   Режим 1, 4 → SRS не нужны, удалить все
+#   Режим 1 → SRS не нужны, удалить все
 #
 # ВАЖНО: все загрузки идут через temp-файл + проверку размера, и только потом
 # atomic mv поверх боевого пути. Если загрузка не прошла проверку — рабочий
@@ -63,7 +63,18 @@ if [ "$ROUTE_MODE" = "2" ]; then
     done
 
     echo "Downloading geosite-ru.srs (MetaCubeX)..."
-    if curl -fsL --connect-timeout 15 --max-time 60 "$MODE2_URL" -o "$TMP_SRS"; then
+
+    MODE2_OK=0
+    if curl -fsL --local-port 57321-57325 --connect-timeout 15 --max-time 60 "$MODE2_URL" -o "$TMP_SRS"; then
+        MODE2_OK=1
+    elif curl -fsL --local-port 57330-57334 --connect-timeout 15 --max-time 60 "$MODE2_URL" -o "$TMP_SRS"; then
+        # raw.githubusercontent.com сам может быть нестабилен в РФ напрямую (не связано со здоровьем узла) —
+        # второй попыткой качаем как раньше, через текущий активный узел
+        echo "Прямая закачка не удалась, получилось через текущий прокси-узел"
+        MODE2_OK=1
+    fi
+    if [ "$MODE2_OK" = "1" ]; then
+
         if check_srs_valid "$TMP_SRS"; then
             sz=$(wc -c < "$TMP_SRS")
             mv "$TMP_SRS" "${SING_BOX_DIR}/${MODE2_FILE}"
@@ -84,9 +95,12 @@ elif [ "$ROUTE_MODE" = "3" ]; then
     rm -f "${SING_BOX_DIR}/${MODE2_FILE}" && echo "Removed: ${MODE2_FILE}"
 
     echo "Downloading sing-box.zip (runetfreedom)..."
-    if ! curl -fsL --connect-timeout 15 --max-time 180 "$MODE3_ZIP_URL" -o "$TMP_ZIP"; then
-        echo "ERROR: download failed for $MODE3_ZIP_URL. Keeping previous files untouched."
-        exit 1
+    if ! curl -fsL --local-port 57321-57325 --connect-timeout 15 --max-time 180 "$MODE3_ZIP_URL" -o "$TMP_ZIP"; then
+        echo "Прямая закачка не удалась, пробую через текущий прокси-узел..."
+        if ! curl -fsL --local-port 57330-57334 --connect-timeout 15 --max-time 180 "$MODE3_ZIP_URL" -o "$TMP_ZIP"; then
+            echo "ERROR: download failed for $MODE3_ZIP_URL. Keeping previous files untouched."
+            exit 1
+        fi
     fi
     if ! check_zip_valid "$TMP_ZIP"; then
         echo "ERROR: downloaded sing-box.zip looks invalid (bad magic). Keeping previous files untouched."

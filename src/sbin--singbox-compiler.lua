@@ -37,6 +37,7 @@ local sb = {
     endpoints = {},
     route = { 
         rules = {},
+        rule_set = {},
         final = "direct",
         auto_detect_interface = true
     },
@@ -52,13 +53,17 @@ local enabled = uci:get("singbox", "main", "enabled") or "0"
 if enabled ~= "1" then os.exit(0) end
 
 local route_mode = uci:get("singbox", "main", "route_mode") or "3"
-local failover   = uci:get("singbox", "main", "failover")   or "0"
+local rule_set_seen = {}
 local custom_dns = uci:get("singbox", "main", "custom_dns") or "https://dns.cloudflare.com/dns-query"
 local local_dns  = uci:get("singbox", "main", "local_dns")  or "tcp://77.88.8.8"
+-- direct по умолчанию: DoH сам по себе защищает от подмены ответа (шифрован),
+-- через прокси-узел имеет смысл гонять, только если провайдер режет сам DoH-эндпоинт
+local dns_remote_detour = uci:get("singbox", "main", "dns_remote_detour") or "direct"
+if dns_remote_detour ~= "proxy" then dns_remote_detour = "direct" end
 if custom_dns == "" then custom_dns = "https://dns.cloudflare.com/dns-query" end
 if local_dns  == "" then local_dns  = "tcp://77.88.8.8" end
 
--- Режимы 1 и 2: final=proxy; режимы 3 и 4: final=direct
+-- Режимы 1 и 2: final=proxy; режим 3: final=direct
 if route_mode == "1" or route_mode == "2" then
     sb.route.final = "proxy"
     sb.dns.final   = "dns-remote"
@@ -79,8 +84,13 @@ local function build_dns_server(tag, addr, detour, resolver_tag)
     return obj
 end
 
-table.insert(sb.dns.servers, build_dns_server("dns-remote", custom_dns, "proxy",  "dns-local"))
+table.insert(sb.dns.servers, build_dns_server("dns-remote", custom_dns, dns_remote_detour, (dns_remote_detour == "proxy") and "dns-local" or nil))
 table.insert(sb.dns.servers, build_dns_server("dns-local",  local_dns,  "direct", nil))
+
+-- Через узел DNS дороже (лишний RTT в туннель) — сглаживаем задержку первого
+-- резолва: отдаём протухший кэш сразу, обновляем в фоне. При direct эта
+-- задержка и так мала, доп. риск отдать stale-ответ не оправдан.
+if dns_remote_detour == "proxy" then sb.dns.optimistic = true end
 
 local function build_outbound(s, tag)
     local o = {
@@ -240,7 +250,7 @@ uci:foreach("singbox", "subscription", function(sub)
 end)
 if #proxy_tags == 0 then os.exit(1) end
 
-if failover == "1" and #proxy_tags > 1 then
+if #proxy_tags > 1 then
     table.insert(sb.outbounds, 1, {
         type = "selector", tag = "proxy",
         outbounds = { "proxy-auto", "direct" }, default = "proxy-auto"
@@ -273,7 +283,8 @@ if route_mode == "3" then
 uci:foreach("singbox", "dns_rule", function(r)
     if not (r.domain and r.domain ~= "" and r.server and r.server ~= "") then return end
     local srv_tag = "dns-domain-" .. (r[".name"] or tostring(#dns_domain + 1))
-    table.insert(sb.dns.servers, build_dns_server(srv_tag, r.server, "direct", nil))
+    local detour = (r.via_proxy == "1") and "proxy" or "direct"
+    table.insert(sb.dns.servers, build_dns_server(srv_tag, r.server, detour, (detour == "proxy") and "dns-local" or nil))
     local dns_item = { server = srv_tag, domain_suffix = {} }
     for d in r.domain:gmatch("[^, ]+") do table.insert(dns_item.domain_suffix, d) end
     table.insert(dns_domain, dns_item)
@@ -294,11 +305,42 @@ uci:foreach("singbox", "custom_rule", function(r)
     end
     if r.domain and r.domain ~= "" then
         rule_item.domain_suffix = {}; dns_item.domain_suffix = {}
+        local rs_tags = {}
         for d in r.domain:gmatch("[^, ]+") do
-            table.insert(rule_item.domain_suffix, d)
-            table.insert(dns_item.domain_suffix, d)
+            local cat = d:match("^geosite:([%w%-%_%.]+)$")
+            if cat then
+                local rtag  = "geosite-x-" .. cat
+                local rpath = "/etc/sing-box/rule-sets/geosite-" .. cat .. ".srs"
+                local f = io.open(rpath, "r")
+                if f then
+                    f:close()
+                    if not rule_set_seen[rtag] then
+                        rule_set_seen[rtag] = true
+                        table.insert(sb.route.rule_set, { tag = rtag, type = "local", format = "binary", path = rpath })
+                    end
+                    table.insert(rs_tags, rtag)
+                else
+                    os.execute("logger -t singbox-compiler 'WARNING: geosite category \"" .. cat .. "\" file missing, skipping rule'")
+                end
+            else
+                table.insert(rule_item.domain_suffix, d)
+                table.insert(dns_item.domain_suffix, d)
+            end
         end
-        has_cond = true
+        if #rs_tags > 0 then
+            rule_item.rule_set = rs_tags
+            -- ВАЖНО: dns_item должен получить НЕЗАВИСИМУЮ копию тегов, а не ссылку
+            -- на тот же массив rs_tags. Иначе rule_item.rule_set и dns_item.rule_set
+            -- указывают на один и тот же Lua-объект, и json.stringify при повторной
+            -- встрече уже сериализованной таблицы пишет null вместо массива тегов —
+            -- DNS-правило теряет условие.
+            local dns_rs_tags = {}
+            for _, t in ipairs(rs_tags) do table.insert(dns_rs_tags, t) end
+            dns_item.rule_set = dns_rs_tags
+        end
+        if #rule_item.domain_suffix == 0 then rule_item.domain_suffix = nil end
+        if #dns_item.domain_suffix  == 0 then dns_item.domain_suffix  = nil end
+        if rule_item.domain_suffix or rule_item.rule_set then has_cond = true end
     end
     if r.ip and r.ip ~= "" then
         rule_item.ip_cidr = {}
@@ -308,7 +350,7 @@ uci:foreach("singbox", "custom_rule", function(r)
     if has_cond then
         rule_item.outbound = r.outbound or "direct"
         table.insert(rt_custom, rule_item)
-        if dns_item.domain_suffix then
+        if dns_item.domain_suffix or dns_item.rule_set then
             dns_item.server = (rule_item.outbound == "proxy") and "dns-remote" or "dns-local"
             table.insert(dns_custom, dns_item)
         end
@@ -337,9 +379,7 @@ if route_mode == "2" then
     local f_ru = io.open(ru_path, "r")
     if f_ru then
         f_ru:close()
-        sb.route.rule_set = {
-            { tag = "geosite-ru", type = "local", format = "binary", path = ru_path }
-        }
+        table.insert(sb.route.rule_set, { tag = "geosite-ru", type = "local", format = "binary", path = ru_path })
         table.insert(rt_geo,  { rule_set = { "geosite-ru" }, outbound = "direct" })
         table.insert(dns_geo, { rule_set = { "geosite-ru" }, server   = "dns-local" })
     else
@@ -353,10 +393,8 @@ elseif route_mode == "3" then
     local f_geo = io.open(geoip_path, "r")
     if f_ru and f_geo then
         f_ru:close(); f_geo:close()
-        sb.route.rule_set = {
-            { tag = "geosite-blocked", type = "local", format = "binary", path = ru_path    },
-            { tag = "geoip-blocked",   type = "local", format = "binary", path = geoip_path }
-        }
+        table.insert(sb.route.rule_set, { tag = "geosite-blocked", type = "local", format = "binary", path = ru_path    })
+        table.insert(sb.route.rule_set, { tag = "geoip-blocked",   type = "local", format = "binary", path = geoip_path })
         table.insert(rt_geo, { rule_set = { "geosite-blocked" }, outbound = "proxy" })
         table.insert(rt_geo, {
             type = "logical", mode = "and",
@@ -373,9 +411,16 @@ elseif route_mode == "3" then
         os.execute("logger -t singbox-compiler 'WARNING: SRS files missing — mode 3 geo rules skipped'")
     end
 end
--- Режимы 1 и 4: geo-правила не нужны
+-- Режим 1: geo-правила не нужны
 
-sb.route.rules = { { action = "sniff" }, { protocol = "dns", action = "hijack-dns" } }
+if #sb.route.rule_set == 0 then sb.route.rule_set = nil end
+
+sb.route.rules = { { action = "sniff" }, { protocol = "dns", action = "hijack-dns" },
+    -- update-rules.sh: если прямая закачка (порт 57321) не удалась, вторая
+    -- попытка идёт с диапазона 57330-57334 — правилу обязательно быть ПЕРВЫМ,
+    -- иначе mode 3 (final=direct) отправит её туда же, откуда она и упала.
+    { source_port_range = { "57330:57334" }, outbound = "proxy" }
+}
 for _, r in ipairs(rt_custom) do table.insert(sb.route.rules, r) end
 for _, r in ipairs(rt_force)  do table.insert(sb.route.rules, r) end
 for _, r in ipairs(rt_geo)    do table.insert(sb.route.rules, r) end

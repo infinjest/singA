@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>singA @@SINGA_VERSION@@</title>
+    <title>singA 0.10.2</title>
     <style>
         :root { --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; --accent: #2563eb; --border: #334155; --danger: #ef4444; --success: #10b981; --warn: #f59e0b; }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; }
@@ -60,7 +60,7 @@
 
 <div class="container">
     <header>
-        <h2>singA <span id="singa-ver">@@SINGA_VERSION@@</span></h2>
+        <h2>singA <span id="singa-ver">0.10.2</span></h2>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <span id="pill-core" class="status-pill">Ядро: ...</span>
             <span id="pill-sb-ver" class="status-pill" style="display:none"></span>
@@ -86,11 +86,10 @@
                             <option value="1">1 — Всё в proxy</option>
                             <option value="2">2 — Всё в proxy кроме РУ</option>
                             <option value="3">3 — Обход РКН (дефолт)</option>
-                            <option value="4">4 — Всё в direct</option>
                         </select>
                     </div>
                     <div class="form-group" style="flex:1;min-width:180px">
-                        <label>Обновление баз РКН</label>
+                        <label>Обновление баз</label>
                         <select id="cfg-cron" onchange="markDirty()">
                             <option value="0 4 * * *">Раз в день</option>
                             <option value="0 4 * * 1">Раз в неделю</option>
@@ -98,14 +97,11 @@
                             <option value="disable">Не обновлять</option>
                         </select>
                     </div>
-                    <div class="form-group" style="flex:1;min-width:140px">
-                        <label><input type="checkbox" id="cfg-failover" onchange="markDirty()"> Балансировка URLTest</label>
-                    </div>
                 </div>
 
                 <div style="display:flex;gap:15px;flex-wrap:wrap;margin-top:4px">
                     <div class="form-group" style="flex:1;min-width:220px">
-                        <label>Upstream DNS (в туннеле)</label>
+                        <label>Upstream DNS (для заблокированных доменов)</label>                       
                         <select id="cfg-dns-select" onchange="onDnsSelectChange('dns')">
                             <option value="https://dns.cloudflare.com/dns-query">Cloudflare DoH (дефолт)</option>
                             <option value="https://dns.adguard-dns.com/dns-query">AdGuard DoH</option>
@@ -113,6 +109,10 @@
                             <option value="__custom__">Задать свой...</option>
                         </select>
                         <input type="text" id="cfg-dns" placeholder="https://..." style="margin-top:6px;display:none" oninput="markDirty()">
+                        <select id="cfg-dns-remote-detour" style="margin-top:6px" onchange="markDirty()">
+                            <option value="direct">Напрямую (быстрее, если провайдер не режет этот DNS)</option>
+                            <option value="proxy">Через прокси-узел (надёжнее, если провайдер режет)</option>
+                        </select>
                     </div>
                     <div class="form-group" style="flex:1;min-width:220px">
                         <label>Local DNS (напрямую)</label>
@@ -140,7 +140,7 @@
                 <div style="background:var(--bg);padding:15px;border-radius:6px;margin-bottom:15px;border:1px solid var(--border)">
                     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
                         <div style="flex:1;min-width:140px"><label>IP источника (LAN):</label><input type="text" id="rule-source" placeholder="Пусто = для всех"></div>
-                        <div style="flex:2;min-width:180px"><label>Домены (через запятую):</label><input type="text" id="rule-domain" placeholder="google.com, netflix.com"></div>
+                        <div style="flex:2;min-width:180px"><label>Домены (через запятую, можно geosite:name — категории сервисов):</label><input type="text" id="rule-domain" placeholder="google.com, geosite:netflix"></div>
                         <div style="flex:1;min-width:140px"><label>IP назначения:</label><input type="text" id="rule-ip" placeholder="8.8.8.8"></div>
                         <div style="flex:1;min-width:120px">
                             <label>Действие:</label>
@@ -158,10 +158,11 @@
                     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
                         <div style="flex:2;min-width:200px"><label>Домены (через запятую):</label><input type="text" id="dns-rule-domain" placeholder="gemini.google.com"></div>
                         <div style="flex:2;min-width:220px"><label>DNS сервер (DoT/DoH):</label><input type="text" id="dns-rule-server" placeholder="tls://xbox-dns.ru"></div>
+                        <div style="min-width:160px"><label style="display:flex;align-items:center;gap:5px;height:38px"><input type="checkbox" id="dns-rule-via-proxy"> Запрос через прокси</label></div>
                         <button class="btn" onclick="addDnsRule()" style="height:38px;padding:0 15px">Добавить</button>
                     </div>
                 </div>
-                <table id="dns-rules-table"><thead><tr><th>Домены</th><th>DNS сервер</th><th></th></tr></thead><tbody></tbody></table>
+                <table id="dns-rules-table"><thead><tr><th>Домены</th><th>DNS сервер</th><th>Через прокси</th><th></th></tr></thead><tbody></tbody></table>
             </div>
         </div>
     </div>
@@ -195,7 +196,7 @@
 
 <script>
 let ubusToken = "00000000000000000000000000000000";
-let clashSecret = ""; let latencyMap = {}; let statusTimer = null;
+let latencyMap = {}; let statusTimer = null; let loadedRouteMode = null;
 let dirty = false; let currentEnabled = false;
 
 async function toggleNode(sec, newVal) {
@@ -384,6 +385,28 @@ async function updateStatus() {
         btn.textContent = currentEnabled ? '● Прокси активен' : '○ Прокси выключен';
         btn.className = 'btn ' + (currentEnabled ? 'btn-success' : 'toggle-off');
     }
+
+    const nodePill = document.getElementById('pill-node');
+    if (currentEnabled) {
+        try {
+            const an = await ubusCall("singbox", "get_active_node");
+            if (an && an.node) {
+                nodePill.style.display = 'inline-block';
+                nodePill.textContent = 'Узел: ' + prettyNodeTag(an.node);
+            } else {
+                nodePill.style.display = 'none';
+            }
+        } catch (e) {
+            nodePill.style.display = 'none';
+        }
+    } else {
+        nodePill.style.display = 'none';
+    }
+}
+
+function prettyNodeTag(tag) {
+    if (tag === 'direct') return 'Прямое соединение';
+    return tag.replace(/^(node|sub)_\d+_/, '');
 }
 
 function latencyBadge(tagWithPrefix) {
@@ -471,10 +494,12 @@ function onRouteModeChange() {
 async function addDnsRule() {
     const domain = document.getElementById('dns-rule-domain').value.trim();
     const server = document.getElementById('dns-rule-server').value.trim();
+    const viaProxy = document.getElementById('dns-rule-via-proxy').checked;
     if (!domain || !server) { alert('Заполните домены и DNS сервер'); return; }
-    await ubusCall("singbox", "add_dns_rule", { rule: { domain, server } });
+    await ubusCall("singbox", "add_dns_rule", { rule: { domain, server, via_proxy: viaProxy } });
     document.getElementById('dns-rule-domain').value = '';
     document.getElementById('dns-rule-server').value = '';
+    document.getElementById('dns-rule-via-proxy').checked = false;
     await ubusCall("singbox", "apply");
     loadData();
     showToast('DNS-правило добавлено и применено');
@@ -492,12 +517,15 @@ async function loadData() {
     const cfg = await ubusCall("singbox", "get_config");
     if (cfg.error) return;
 
-    document.getElementById('cfg-route-mode').value  = cfg.main?.route_mode  || "3";
-    document.getElementById('cfg-failover').checked = cfg.main?.failover  === "1";
+    let routeMode = cfg.main?.route_mode || "3";
+    if (!["1","2","3"].includes(routeMode)) routeMode = "3";
+    loadedRouteMode = routeMode;
+    document.getElementById('cfg-route-mode').value  = routeMode;
     document.getElementById('cfg-cron').value       = cfg.main?.cron_schedule || "0 4 * * 1";
 
     setDnsSelectValue('dns',   cfg.main?.custom_dns || "https://dns.cloudflare.com/dns-query");
     setDnsSelectValue('local', cfg.main?.local_dns  || "tcp://77.88.8.8");
+    document.getElementById('cfg-dns-remote-detour').value = cfg.main?.dns_remote_detour || "direct";
     applyRouteMode();
 
     let rHtml = '';
@@ -513,9 +541,10 @@ async function loadData() {
     let dnsRuleHtml = '';
     Object.entries(cfg.dns_rules || {}).forEach(([sec, r]) => {
         dnsRuleHtml += `<tr><td style="word-break:break-all">${esc(r.domain)}</td><td style="word-break:break-all">${esc(r.server)}</td>
+            <td>${r.via_proxy === "1" ? "да" : "нет"}</td>
             <td><button class="btn btn-danger" style="padding:4px 10px" onclick="deleteDnsRule('${esc(sec)}')">×</button></td></tr>`;
     });
-    document.querySelector('#dns-rules-table tbody').innerHTML = dnsRuleHtml || '<tr><td colspan="3" style="color:#64748b; text-align:center;">Нет DNS-правил для отдельных доменов</td></tr>';
+    document.querySelector('#dns-rules-table tbody').innerHTML = dnsRuleHtml || '<tr><td colspan="4" style="color:#64748b; text-align:center;">Нет DNS-правил для отдельных доменов</td></tr>';
 
     const subCounts = {};
     (cfg.sub_nodes || []).forEach(n => { subCounts[n._subscription] = (subCounts[n._subscription] || 0) + 1; });
@@ -588,16 +617,24 @@ async function saveSettings() {
         alert('Укажите local DNS сервер'); return;
     }
     const btn = document.getElementById('btn-apply'); btn.disabled = true; btn.textContent = 'Применяется...';
+    const newMode = document.getElementById('cfg-route-mode').value;
+    const modeChanged = loadedRouteMode !== null && newMode !== loadedRouteMode;
     try {
         await ubusCall("singbox", "set_settings", { settings: {
-            route_mode: document.getElementById('cfg-route-mode').value,
-            failover: document.getElementById('cfg-failover').checked ? "1" : "0",
+            route_mode: newMode,
             cron_schedule: document.getElementById('cfg-cron').value,
             custom_dns: dnsVal || "https://dns.cloudflare.com/dns-query",
-            local_dns: localDnsVal || "tcp://77.88.8.8"
+            local_dns: localDnsVal || "tcp://77.88.8.8",
+            dns_remote_detour: document.getElementById('cfg-dns-remote-detour').value
         }});
         const res = await ubusCall("singbox", "apply");
-        alert(res.error ? ('Ошибка: ' + (res.error)) : 'Успешно применено!');
+        if (res.error) {
+            alert('Ошибка: ' + res.error);
+        } else if (modeChanged) {
+            alert('Применено. Режим маршрутизации изменён — базы правил обновляются в фоне, конфигурация перечитается автоматически через 1–3 минуты.');
+        } else {
+            alert('Успешно применено!');
+        }
         dirty = false;
         loadData();
         updateStatus();

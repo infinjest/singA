@@ -1,6 +1,6 @@
 #!/bin/sh
 # singA — Compiled JSON Validity Test
-# Прогоняет компилятор для всех 4 route_mode и проверяет валидность
+# Прогоняет компилятор для всех route_mode (1, 2, 3) и проверяет валидность
 # скомпилированного sing-box JSON через `sing-box check`.
 # Не трогает существующие узлы пользователя — добавляет два временных
 # фиктивных узла (VLESS → sb.outbounds, AmneziaWG → sb.endpoints, разные
@@ -83,7 +83,7 @@ uci commit singbox
 echo ""
 echo "── Compiler output validity per route_mode ──────────────────"
 
-for MODE in 1 2 4 3; do
+for MODE in 1 2 3; do
     uci set singbox.main.route_mode="$MODE"
     uci commit singbox
 

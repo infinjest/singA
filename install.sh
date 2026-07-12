@@ -13,7 +13,7 @@ GITHUB_USER="infinjest"
 REPO_NAME="singA"
 BRANCH="main"
 RAW_BASE="https://raw.githubusercontent.com/${GITHUB_USER}/${REPO_NAME}/${BRANCH}"
-SINGA_VERSION="0.10.2"
+SINGA_VERSION="0.10.3"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 log() { echo "[singA] $*"; }
@@ -174,7 +174,7 @@ cat > "${ACL_DIR}/singbox.json" << 'EOF'
   "singbox-ui": {
     "description": "Sing-Box Control Plane UI access",
     "read": {
-      "ubus": { "singbox": ["status", "get_config"] },
+      "ubus": { "singbox": ["status", "get_config", "get_active_node"] },
       "uci":  { "singbox": ["*"] }
     },
     "write": {
@@ -203,9 +203,9 @@ if command -v uci >/dev/null 2>&1; then
 set singbox.main=main
 set singbox.main.enabled=0
 set singbox.main.route_mode=3
-set singbox.main.failover=0
 set singbox.main.custom_dns=https://dns.cloudflare.com/dns-query
 set singbox.main.local_dns=tcp://77.88.8.8
+set singbox.main.dns_remote_detour=direct
 set singbox.main.cron_schedule=0 4 * * 1
 commit singbox
 UCI
@@ -216,12 +216,7 @@ UCI
     else
         # Upgrade — migrate rdbypass → route_mode if needed
         if [ -z "$(uci -q get singbox.main.route_mode 2>/dev/null)" ]; then
-            rdbypass=$(uci -q get singbox.main.rdbypass 2>/dev/null || echo "0")
-            if [ "$rdbypass" = "1" ]; then
-                uci set singbox.main.route_mode=3
-            else
-                uci set singbox.main.route_mode=4
-            fi
+            uci set singbox.main.route_mode=3
             uci -q delete singbox.main.rdbypass   2>/dev/null || true
             uci -q delete singbox.main.tproxy_port 2>/dev/null || true
             [ -z "$(uci -q get singbox.main.cron_schedule 2>/dev/null)" ] && \
@@ -230,6 +225,12 @@ UCI
             ok "Migrated: rdbypass → route_mode=$(uci -q get singbox.main.route_mode)"
         else
             ok "Existing config up to date (route_mode=$(uci -q get singbox.main.route_mode))"
+        fi
+        # 0.10.3: опция failover упразднена — URLtest включается автоматически при 2+ узлах
+        if [ -n "$(uci -q get singbox.main.failover 2>/dev/null)" ]; then
+            uci -q delete singbox.main.failover 2>/dev/null || true
+            uci commit singbox
+            ok "Removed deprecated singbox.main.failover"
         fi
     fi
 else

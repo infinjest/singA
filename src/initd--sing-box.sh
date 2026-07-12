@@ -10,6 +10,7 @@ RUN_CONFIG="/var/run/sing-box_running.json"
 
 TPROXY_MARK="0x100"
 TPROXY_TABLE="100"
+INFRA_LOCAL_PORT="57321-57325"
 
 _port_bound() {
     if command -v ss >/dev/null 2>&1; then
@@ -62,12 +63,21 @@ init_routing() {
     nft add element inet singbox bypass_v4 { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4 }
     nft add element inet singbox bypass_v6 { ::1/128, fc00::/7, fe80::/10, 2001:db8::/32, ::ffff:0:0/96 } 2>/dev/null || true
 
-    nft add rule inet singbox prerouting ip  daddr @bypass_v4 return
-    nft add rule inet singbox prerouting ip6 daddr @bypass_v6 return 2>/dev/null || true
     nft add rule inet singbox prerouting meta mark 0xff return
     nft add rule inet singbox prerouting socket transparent 1 meta mark set "${TPROXY_MARK}" accept
+
+    nft add rule inet singbox prerouting ip  protocol tcp th dport 53 tproxy ip  to :"${tproxy_port}" meta mark set "${TPROXY_MARK}" accept
+    nft add rule inet singbox prerouting ip  protocol udp th dport 53 tproxy ip  to :"${tproxy_port}" meta mark set "${TPROXY_MARK}" accept
+    nft add rule inet singbox prerouting ip6 nexthdr  tcp th dport 53 tproxy ip6 to :"${tproxy_port}" meta mark set "${TPROXY_MARK}" accept 2>/dev/null || true
+    nft add rule inet singbox prerouting ip6 nexthdr  udp th dport 53 tproxy ip6 to :"${tproxy_port}" meta mark set "${TPROXY_MARK}" accept 2>/dev/null || true
+
+    nft add rule inet singbox prerouting ip  daddr @bypass_v4 return
+    nft add rule inet singbox prerouting ip6 daddr @bypass_v6 return 2>/dev/null || true
+
     nft add rule inet singbox prerouting ip  protocol { tcp, udp } tproxy ip  to :"${tproxy_port}" meta mark set "${TPROXY_MARK}" accept
     nft add rule inet singbox prerouting ip6 nexthdr  { tcp, udp } tproxy ip6 to :"${tproxy_port}" meta mark set "${TPROXY_MARK}" accept 2>/dev/null || true
+
+    nft add rule inet singbox output tcp sport "${INFRA_LOCAL_PORT}" return
 
     nft add rule inet singbox output ip daddr @bypass_v4 return
     nft add rule inet singbox output meta mark 0xff return
@@ -130,9 +140,15 @@ stop_service() {
 }
 
 reload_service() {
-    "$COMPILER" || return 1
-    [ -f "$RUN_CONFIG" ] || return 0
+    exec 9>/var/run/singbox-reload.lock
+    if ! flock -n 9; then
+        logger -t sing-box "reload уже выполняется, пропускаю повторный вызов"
+        return 0
+    fi
+    "$COMPILER" || { flock -u 9; return 1; }
+    if [ ! -f "$RUN_CONFIG" ]; then flock -u 9; return 0; fi
     rc_procd start_service
+    flock -u 9
 }
 
 service_triggers() {

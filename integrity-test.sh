@@ -101,7 +101,7 @@ fi
 # ── 3. UCI config ─────────────────────────────────────────────────────────────
 section "UCI config"
 
-for key in enabled route_mode failover custom_dns local_dns cron_schedule; do
+for key in enabled route_mode custom_dns local_dns cron_schedule; do
     VAL=$(uci -q get singbox.main.$key)
     if [ -n "$VAL" ]; then
         ok "singbox.main.$key = $VAL"
