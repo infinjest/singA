@@ -48,7 +48,8 @@ deploy_utility() {
         log "       Файл ${file_name} не найден локально. Скачиваю с GitHub..."
         if [ "$DRY_RUN" != "1" ]; then
             mkdir -p "$(dirname "$system_path")"
-            curl -sL --max-time 15 "${RAW_BASE}/${file_name}" -o "$system_path" || die "Не удалось скачать ${file_name}"
+            curl -sL --http1.1 --max-time 30 --retry 5 --retry-delay 3 --retry-connrefused \
+                "${RAW_BASE}/${file_name}" -o "$system_path" || die "Не удалось скачать ${file_name}"
             chmod "$mode" "$system_path"
         else
             echo "        ~ curl -sL ${RAW_BASE}/${file_name} -o $system_path"
@@ -106,8 +107,8 @@ else
 fi
 ok "Dependencies handling complete"
 
-# ── 2. Download sing-box-extended ─────────────────────────────────────────────
-log "[2/8] Downloading sing-box-extended..."
+# ── 2. Download sing-box-lx ─────────────────────────────────────────────
+log "[2/8] Downloading sing-box-lx..."
 LATEST=$(curl -sL --max-time 15 \
     "https://api.github.com/repos/${SB_REPO}/releases/latest" \
     | grep '"tag_name"' | head -1 \
@@ -152,6 +153,20 @@ ok "Directories ready (sub_cache → RAM, SRS → Flash)"
 
 # ── 4. Install project files from src/ ───────────────────────────────────────
 log "[4/8] Installing project files and automation tools..."
+
+SRC_TARBALL_URL="https://codeload.github.com/${SB_REPO}/tar.gz/refs/heads/${BRANCH}"
+if [ "$DRY_RUN" != "1" ]; then
+    if curl -sL --http1.1 --max-time 30 --retry 3 --retry-delay 3 --retry-connrefused \
+        "${SRC_TARBALL_URL}" -o /tmp/singa-src.tar.gz; then
+        mkdir -p /tmp/singa-src
+        tar -xzf /tmp/singa-src.tar.gz -C /tmp/singa-src --strip-components=1
+        SRC="/tmp/singa-src"
+        ok "Project files archive downloaded"
+    else
+        echo "       WARNING: archive download failed, falling back to per-file download"
+    fi
+fi
+
 deploy_utility "src/rpcd--singbox.lua"            "${RPCD_DIR}/singbox"              "755"
 deploy_utility "src/sbin--singbox-compiler.lua"   "/usr/sbin/singbox-compiler"       "755"
 deploy_utility "src/sbin--singbox-sub-updater.sh" "/usr/sbin/singbox-sub-updater"    "755"
