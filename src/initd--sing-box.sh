@@ -115,7 +115,14 @@ start_service() {
     [ -x "$COMPILER" ] && "$COMPILER" || return 1
     [ -f "$RUN_CONFIG" ] || return 0
 
-    if [ "$has_cache" -eq 1 ] && [ -x "/usr/sbin/singbox-sub-updater" ]; then
+    # Фоновая пересинхронизация подписок на "тёплом" кэше — должна отработать
+    # только один раз за жизнь сервиса. Раньше условием было только has_cache,
+    # а reload_service() тоже вызывает start_service(), поэтому каждый reload
+    # порождал новый такой фоновый job, который сам в конце снова дёргал
+    # reload -> start_service -> новый job, и так по кругу бесконечно.
+    if [ "$has_cache" -eq 1 ] && [ ! -f /var/run/singbox-bg-synced ] \
+        && [ -x "/usr/sbin/singbox-sub-updater" ]; then
+        touch /var/run/singbox-bg-synced
         (
             /usr/sbin/singbox-sub-updater >/dev/null 2>&1
             /etc/init.d/sing-box reload   >/dev/null 2>&1
@@ -124,6 +131,13 @@ start_service() {
 
     procd_open_instance "sing-box"
     procd_set_param command "$PROG" run -c "$RUN_CONFIG"
+    # Без этого procd сравнивает только параметры инстанса (командную строку и
+    # т.п.), которые от reload'а к reload'у не меняются, и решает, что
+    # перезапуск не нужен — реально запущенный sing-box продолжает работать со
+    # старым конфигом, хотя compiler уже переписал файл на диске. Именно из-за
+    # этого новые custom_rule/dns_rule "применялись" только после ручного
+    # restart, а не через кнопку "Применить" (apply -> reload).
+    procd_set_param file "$RUN_CONFIG"
     procd_set_param respawn 3600 5 5
     procd_set_param limits nofile="65535 65535" core="0"
     procd_set_param stdout 0
@@ -137,6 +151,7 @@ start_service() {
 stop_service() {
     clean_routing
     rm -f "$RUN_CONFIG"
+    rm -f /var/run/singbox-bg-synced
 }
 
 reload_service() {
