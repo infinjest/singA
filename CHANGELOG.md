@@ -4,6 +4,38 @@
 
 ---
 
+## [0.10.3] — 2026-07-11
+
+### Breaking / Removed
+
+- **`route_mode=4` («всё в direct») удалён** — не имел уникальной логики, совпадал с общей веткой `else` (`final=direct`, без доп. правил маршрутизации/DNS). Убран из UI-select (`cfg-route-mode` теперь содержит только `1`/`2`/`3`).
+- **Чекбокс «Балансировка URLTest» (`failover`) удалён** — `urltest`-группа (`proxy-auto`) теперь собирается безусловно при 2+ узлах (`#proxy_tags > 1`, без проверки UCI-флага). `install.sh` при апгрейде удаляет `singbox.main.failover` из существующих конфигов.
+
+### Added
+
+- **Тег активной ноды в шапке UI** — `get_active_node` (rpcd) запрашивает Clash API (`/proxies/proxy` через `wget` на `127.0.0.1:9090`).
+- **`geosite:<категория>`** в поле доменов «Правила маршрутизации (Исключения)» (`custom_rule`, route_mode=3) — категория скачивается на лету в `add_rule` (rpcd) с `github.com/MetaCubeX/meta-rules-dat` в `/etc/sing-box/rule-sets/geosite-<категория>.srs`; `compiler` транслирует условие в `route.rule_set`/`dns.rule_set` по тегу `geosite-x-<категория>`.
+- **Чекбокс «Запрос через прокси» для `dns_rule`** — новое поле `via_proxy`; `detour` персонального DNS-сервера больше не всегда `direct`.
+- **`dns_remote_detour`** (UCI/UI, `direct`/`proxy`, дефолт `direct`) для upstream DNS-сервера `dns-remote`.
+- **`dns.optimistic=true`** в компиляторе — включается автоматически только при `dns_remote_detour=="proxy"` (сглаживает лишний RTT в туннель при первом резолве).
+- **Fallback в `update-rules.sh`**: при неудаче прямой закачки баз (`--local-port 57321-57325`) — повторная попытка через текущий прокси-узел (`--local-port 57330-57334`); правило `source_port_range={"57330:57334"} → outbound=proxy` первым в `route.rules`.
+- `sb.route.rule_set` теперь собирается через `table.insert` с дедупликацией по тегу (`rule_set_seen`), а не перезаписывается присваиванием — позволяет одновременно иметь и гео-базу route_mode, и произвольные `geosite:`-категории из `custom_rule`.
+
+### Fixed
+
+- **`custom_rule` с единственным условием `geosite:<категория>`, чей `.srs`-файл отсутствовал на диске на момент компиляции**, превращался в route-правило без единого условия — матчило абсолютно весь трафик. Исправлено: при отсутствующем файле правило корректно пропускается (`logger` warning), `has_cond` не выставляется.
+- **DNS-запросы LAN-клиентов к самому роутеру (dnsmasq на LAN-адресе) не перехватывались** — LAN-адрес роутера сам входит в `bypass_v4`/`bypass_v6`, запросы на порт 53 обходили hijack-dns стороной. Добавлен явный перехват `tcp/udp dport 53 → tproxy` в `prerouting`, размещённый до общих правил `daddr @bypass_v4/v6 return`.
+- **`dns-remote` был жёстко закреплён на `detour="proxy"`** (`build_dns_server("dns-remote", custom_dns, "proxy", "dns-local")`) — резолвинг всегда шёл через прокси-узел без необходимости. Заменено на параметризуемый `dns_remote_detour` (см. Added), дефолт `direct`.
+- **Гонка reload при «горячей» смене `route_mode`**: параллельные вызовы `reload_service()` могли столкнуться за `nftables`/`ip rule` внутри `init_routing()`. Добавлен `flock` (`/var/run/singbox-reload.lock`, неблокирующий `-n`) — параллельный вызов теперь безопасно пропускается вместо гонки за одни и те же nft-цепочки.
+- **`.github/workflows/mirror-singbox.yml`**: в шаге «Prune older mirrored releases» после `gh release delete ...` добавлен `|| echo "::warning::Не удалось удалить релиз/тег ${OLD_TAG} (возможно, тег уже отсутствует)"` — ошибка удаления одного устаревшего mirror-релиза больше не роняет весь шаг цикла.
+- **`compiler`: `dns_item.rule_set` и `rule_item.rule_set` для нового блока `geosite:`-исключений ссылались на один и тот же Lua-объект** — `json.stringify` (`luci.jsonc`) при повторной встрече уже сериализованной таблицы (сперва в `route.rules`, затем в `dns.rules`) писал `null` вместо массива тегов; DNS-правило теряло условие. Исправлено: `dns_item` получает независимую копию массива тегов (`table.insert` в новый массив вместо присваивания того же `rs_tags`).
+
+### Known issues / требует доработки
+
+- `build_dns_server` не поддерживает `host:port` в адресе DNS-сервера (`local_dns`/`custom_dns`) — понадобится для нестандартных портов (например AdGuard Home на 5353).
+
+---
+
 ## [0.10.2] — 2026-07-05
 
 ### Breaking / Removed
