@@ -110,8 +110,8 @@ for key in enabled route_mode custom_dns local_dns cron_schedule; do
     fi
 done
 
-# ── 4. RPcd / UBUS ───────────────────────────────────────────────────────────
-section "RPcd / UBUS"
+# ── 4. RPCD / UBUS ────────────────────────────────────────────────────────────
+section "RPCD / UBUS"
 
 if pgrep rpcd >/dev/null 2>&1; then
     ok "rpcd is running"
@@ -197,8 +197,7 @@ uci set singbox.main.enabled=0 2>/dev/null
 if /usr/sbin/singbox-compiler >/dev/null 2>&1; then
     ok "Compiler exits cleanly when disabled"
 else
-    # exit code 0 expected when disabled
-    ok "Compiler exits cleanly when disabled"
+    fail "Compiler did not exit cleanly when disabled"
 fi
 # Restore
 uci set singbox.main.enabled="$CURRENT" 2>/dev/null
@@ -299,7 +298,7 @@ else
     fail "Cron job missing"
 fi
 
-ylw "  ~ Run 'sh /usr/sbin/singbox-compiler-test' separately to validate compiler output for all 4 route modes"
+ylw "  ~ Run 'sh /usr/sbin/singbox-compiler-test' separately to validate compiler output for all 3 route modes"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""

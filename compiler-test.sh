@@ -1,11 +1,11 @@
 #!/bin/sh
 # singA — Compiled JSON Validity Test
-# Прогоняет компилятор для всех route_mode (1, 2, 3) и проверяет валидность
-# скомпилированного sing-box JSON через `sing-box check`.
-# Не трогает существующие узлы пользователя — добавляет два временных
-# фиктивных узла (VLESS → sb.outbounds, AmneziaWG → sb.endpoints, разные
-# ветки compiler'а) и удаляет их, восстанавливает route_mode и SRS-файлы
-# после теста.
+# Runs the compiler for every route_mode (1, 2, 3) and validates the compiled
+# sing-box JSON via `sing-box check`.
+# Doesn't touch the user's existing nodes — adds two temporary dummy nodes
+# (VLESS → sb.outbounds, AmneziaWG → sb.endpoints, different compiler
+# branches), removes them afterwards, and restores route_mode and the SRS
+# files once the test is done.
 #
 # Usage: sh compiler-test.sh [--verbose]
 
@@ -27,7 +27,7 @@ COMPILED_JSON="/var/run/sing-box_running.json"
 TEST_SECTION_VLESS="__json_valid_test_vless"
 TEST_SECTION_AWG="__json_valid_test_awg"
 
-# ── Сохранить текущее состояние ──────────────────────────────────────────────
+# ── Save current state ────────────────────────────────────────────────────────
 ORIG_ROUTE_MODE=$(uci -q get singbox.main.route_mode 2>/dev/null || echo "3")
 ORIG_ENABLED=$(uci -q get singbox.main.enabled 2>/dev/null || echo "0")
 
@@ -38,9 +38,9 @@ cleanup() {
     uci set singbox.main.enabled="$ORIG_ENABLED" 2>/dev/null
     uci commit singbox 2>/dev/null
     echo ""
-    ylw "Восстанавливаю исходный route_mode=${ORIG_ROUTE_MODE}, обновляю SRS-файлы..."
+    ylw "Restoring original route_mode=${ORIG_ROUTE_MODE}, updating SRS files..."
     /etc/sing-box/update-rules.sh
-    ylw "Готово, состояние восстановлено."
+    ylw "Done, state restored."
 }
 trap cleanup EXIT
 
@@ -55,9 +55,9 @@ fi
 SING_BOX_BIN="/usr/bin/sing-box"
 command -v sing-box >/dev/null 2>&1 && SING_BOX_BIN="sing-box"
 
-# ── Временные тестовые узлы: VLESS (outbounds) + AmneziaWG (endpoints) ───────
-# Фиктивные данные используются только для прохождения структурной проверки
-# sing-box check — никакого реального соединения тест не устанавливает.
+# ── Temporary test nodes: VLESS (outbounds) + AmneziaWG (endpoints) ──────────
+# Dummy data is only used to pass the structural `sing-box check` — the test
+# never establishes a real connection.
 uci set singbox.${TEST_SECTION_VLESS}=node
 uci set singbox.${TEST_SECTION_VLESS}.type="vless"
 uci set singbox.${TEST_SECTION_VLESS}.tag="json-valid-test-vless"
@@ -87,8 +87,14 @@ for MODE in 1 2 3; do
     uci set singbox.main.route_mode="$MODE"
     uci commit singbox
 
-    ylw "route_mode=$MODE: обновляю SRS-файлы (если нужны)..."
-    /etc/sing-box/update-rules.sh >/tmp/rules_mode${MODE}.log 2>&1
+    ylw "route_mode=$MODE: updating SRS files (if needed)..."
+    # --no-reload: this call only needs fresh SRS files to validate against;
+    # a live reload here would push the temporary dummy VLESS/AmneziaWG test
+    # nodes (and this loop's test route_mode) into an actually-running
+    # sing-box instance, disrupting real traffic mid-test. The final
+    # cleanup() call below (no flag) does the one real, wanted reload once
+    # the original UCI state has been restored.
+    /etc/sing-box/update-rules.sh --no-reload >/tmp/rules_mode${MODE}.log 2>&1
 
     if "$COMPILER" >/tmp/compiler_mode${MODE}.log 2>&1; then
         :
