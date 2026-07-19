@@ -1,6 +1,8 @@
 #!/usr/bin/lua
 local json = require "luci.jsonc"
 local uci  = require "uci".cursor()
+package.path = package.path .. ";/usr/lib/singbox/?.lua"
+local validate = require "validate"
 
 local SUB_CACHE_DIR = "/etc/sing-box/sub_cache"
 
@@ -8,7 +10,7 @@ local method = arg[1]
 local action = arg[2]
 
 if method == "list" then
-    print('{"status":{},"get_config":{},"add_node":{"node":"table"},"del_node":{"section":"string"},"edit_node":{"section":"string","node":"table"},"set_settings":{"settings":"table"},"add_rule":{"rule":"table"},"del_rule":{"section":"string"},"set_rules":{"force_proxy":"table","force_direct":"table"},"add_dns_rule":{"rule":"table"},"del_dns_rule":{"section":"string"},"add_subscription":{"label":"string","url":"string"},"update_sub":{"section":"string"},"apply":{},"check_connectivity":{},"get_running_config":{},"get_log":{},"get_active_node":{}}')
+    print('{"status":{},"get_config":{},"add_node":{"node":"table"},"del_node":{"section":"string"},"edit_node":{"section":"string","node":"table"},"set_settings":{"settings":"table"},"add_rule":{"rule":"table"},"del_rule":{"section":"string"},"add_dns_rule":{"rule":"table"},"del_dns_rule":{"section":"string"},"add_subscription":{"label":"string","url":"string"},"update_sub":{"section":"string"},"apply":{},"check_connectivity":{},"get_running_config":{},"get_log":{},"get_active_node":{}}')
     os.exit(0)
 end
 
@@ -34,12 +36,12 @@ if action == "status" then
             sub_updating = (r2 == 0 or r2 == true)
         end
     end
-    -- Версия sing-box
+    -- sing-box version
     local sb_ver = ""
     local vf = io.popen("/usr/bin/sing-box version 2>/dev/null | head -1")
     if vf then sb_ver = vf:read("*l") or ""; vf:close() end
     sb_ver = sb_ver:match("sing%-box version (.+)") or sb_ver
-    -- Дата баз: зависит от route_mode (режим 2 — geosite-ru.srs, режим 3 — ru-blocked.srs)
+    -- Database date: depends on route_mode (mode 2 → geosite-ru.srs, mode 3 → ru-blocked.srs)
     local route_mode_now = uci:get("singbox", "main", "route_mode") or "3"
     local db_mtime = ""
     local db_label = ""
@@ -58,10 +60,9 @@ if action == "status" then
     respond({ running = running, sub_updating = sub_updating, sb_version = sb_ver, db_mtime = db_mtime, db_label = db_label })
 
 elseif action == "get_config" then
-    local cfg = { main = {}, nodes = {}, rules = {}, custom_rules = {}, dns_rules = {}, subscriptions = {}, sub_nodes = {} }
+    local cfg = { main = {}, nodes = {}, custom_rules = {}, dns_rules = {}, subscriptions = {}, sub_nodes = {} }
     uci:foreach("singbox", "main",         function(s) cfg.main = s end)
     uci:foreach("singbox", "node",         function(s) cfg.nodes[s[".name"]] = s end)
-    uci:foreach("singbox", "rule",         function(s) cfg.rules[s[".name"]] = s end)
     uci:foreach("singbox", "custom_rule",  function(s) cfg.custom_rules[s[".name"]] = s end)
     uci:foreach("singbox", "dns_rule",     function(s) cfg.dns_rules[s[".name"]] = s end)
     uci:foreach("singbox", "subscription", function(sub)
@@ -97,7 +98,19 @@ elseif action == "add_rule" then
     if req.rule.outbound ~= "proxy" and req.rule.outbound ~= "direct" then
         respond({ error = "outbound must be 'proxy' or 'direct'" })
     end
-    -- Скачиваем недостающие geosite:<category> rule-set'ы (MetaCubeX/meta-rules-dat, sing-box формат)
+    if req.rule.domain then
+        local ok, err = validate.domain_list(req.rule.domain)
+        if not ok then respond({ error = "Домен: " .. err }) end
+    end
+    if req.rule.source then
+        local ok, err = validate.ip_cidr_list(req.rule.source)
+        if not ok then respond({ error = "Источник: " .. err }) end
+    end
+    if req.rule.ip then
+        local ok, err = validate.ip_cidr_list(req.rule.ip)
+        if not ok then respond({ error = "IP назначения: " .. err }) end
+    end
+    -- Download any missing geosite:<category> rule-sets (MetaCubeX/meta-rules-dat, sing-box format)
     if req.rule.domain then
         os.execute("mkdir -p /etc/sing-box/rule-sets")
         for cat in tostring(req.rule.domain):gmatch("geosite:([%w%-%_%.]+)") do
@@ -141,17 +154,6 @@ elseif action == "del_rule" then
     uci:save("singbox")
     respond({ status = "ok" })
 
-elseif action == "set_rules" then
-    if type(req.force_proxy)  ~= "table" and type(req.force_proxy)  ~= "nil" then respond({ error = "force_proxy must be array" }) end
-    if type(req.force_direct) ~= "table" and type(req.force_direct) ~= "nil" then respond({ error = "force_direct must be array" }) end
-    local rsec
-    uci:foreach("singbox", "rule", function(s) rsec = s[".name"] end)
-    if not rsec then rsec = uci:add("singbox", "rule") end
-    if req.force_proxy  ~= nil then uci:set("singbox", rsec, "force_proxy",  req.force_proxy) end
-    if req.force_direct ~= nil then uci:set("singbox", rsec, "force_direct", req.force_direct) end
-    uci:save("singbox")
-    respond({ status = "ok" })
-
 elseif action == "del_node" then
     if not req.section then respond({ error = "Missing section" }) end
     local sec_type = uci:get("singbox", req.section)
@@ -159,13 +161,11 @@ elseif action == "del_node" then
         respond({ error = "Invalid section type" })
     end
     if sec_type == "subscription" then
+        -- Subscription-derived nodes only ever live in the tmpfs/sub_cache JSON
+        -- cache below, never as their own "node" UCI sections, so there is
+        -- nothing further to hunt down in UCI here.
         os.remove("/var/run/singbox_sub_" .. req.section .. ".json")
         os.remove(SUB_CACHE_DIR .. "/" .. req.section .. ".json")
-        local to_delete = {}
-        uci:foreach("singbox", "node", function(s)
-            if s.subscription == req.section then table.insert(to_delete, s[".name"]) end
-        end)
-        for _, name in ipairs(to_delete) do uci:delete("singbox", name) end
     end
     uci:delete("singbox", req.section)
     uci:save("singbox")
@@ -179,6 +179,10 @@ elseif action == "add_node" then
         s3=true, s4=true, pre_shared_key=true, h1=true, h2=true, h3=true, h4=true,
         transport=true, path=true, thost=true, mode=true, enabled=true
     }
+    if req.node.server then
+        local ok, err = validate.dns_addr(req.node.server)
+        if not ok then respond({ error = "Сервер: " .. err }) end
+    end
     local sname = uci:add("singbox", "node")
     for k, v in pairs(req.node) do
         if allowed[k] then
@@ -194,6 +198,10 @@ elseif action == "edit_node" then
     local sec_type = uci:get("singbox", req.section)
     if sec_type ~= "node" then respond({ error = "Invalid section type" }) end
     if type(req.node) ~= "table" then respond({ error = "Invalid node data" }) end
+    if req.node.server and req.node.server ~= "" then
+        local ok, err = validate.dns_addr(req.node.server)
+        if not ok then respond({ error = "Сервер: " .. err }) end
+    end
     local allowed = {
         tag=true, server=true, server_port=true, uuid=true, security=true, sni=true, pbk=true, sid=true,
         private_key=true, peer_public_key=true, local_address=true, jc=true, jmin=true, jmax=true, s1=true, s2=true,
@@ -214,7 +222,19 @@ elseif action == "edit_node" then
     respond({ status = "ok" })
 
 elseif action == "set_settings" then
-    local allowed = { enabled=true, route_mode=true, custom_dns=true, local_dns=true, cron_schedule=true, dns_remote_detour=true }
+    local allowed = { enabled=true, route_mode=true, custom_dns=true, local_dns=true, cron_schedule=true, dns_remote_detour=true, block_dot=true, block_quic=true }
+    if req.settings and req.settings.custom_dns then
+        local ok, err = validate.dns_addr(req.settings.custom_dns)
+        if not ok then respond({ error = "Upstream DNS: " .. err }) end
+    end
+    if req.settings and req.settings.local_dns then
+        local ok, err = validate.dns_addr(req.settings.local_dns)
+        if not ok then respond({ error = "Local DNS: " .. err }) end
+    end
+    if req.settings and req.settings.cron_schedule then
+        local ok, err = validate.cron(req.settings.cron_schedule)
+        if not ok then respond({ error = "Cron: " .. err }) end
+    end
     local old_mode = uci:get("singbox", "main", "route_mode") or "3"
     local new_mode = (req.settings or {}).route_mode
     for k, v in pairs(req.settings or {}) do
@@ -222,7 +242,7 @@ elseif action == "set_settings" then
     end
     uci:save("singbox")
 
-    -- Cron: читаем cron_schedule из UCI (уже сохранён выше)
+    -- Cron: read cron_schedule from UCI (already saved above)
     local cron = uci:get("singbox", "main", "cron_schedule") or "0 4 * * 1"
     local safe_cron = cron:gsub("'", ""):gsub("[^%d%*/,%-% ]", "")
     os.execute("mkdir -p /etc/crontabs && touch /etc/crontabs/root")
@@ -247,6 +267,14 @@ elseif action == "add_dns_rule" then
     end
     if req.rule.domain == "" or req.rule.server == "" then
         respond({ error = "domain and server must not be empty" })
+    end
+    do
+        local ok, err = validate.domain_list(req.rule.domain)
+        if not ok then respond({ error = "Домен: " .. err }) end
+    end
+    do
+        local ok, err = validate.dns_addr(req.rule.server)
+        if not ok then respond({ error = "DNS-сервер: " .. err }) end
     end
     local sname = uci:add("singbox", "dns_rule")
     uci:set("singbox", sname, "domain", (tostring(req.rule.domain):gsub("['\"\\]", "")))
@@ -304,8 +332,32 @@ elseif action == "get_running_config" then
 
 elseif action == "get_log" then
     local lines = ""
-    local lf = io.popen("logread -e sing-box 2>/dev/null | tail -50")
+    -- singbox-logtail (see initd) keeps this file as a 100-line ring buffer
+    -- of sing-box's own output. Fall back to the old logread-based lookup if
+    -- the file doesn't exist yet (service just started, not a single line
+    -- has arrived through the pipe) so the panel doesn't show an empty log.
+    local lf = io.open("/var/run/sing-box_log.txt", "r")
     if lf then lines = lf:read("*a") or ""; lf:close() end
+    if lines == "" then
+        local pf = io.popen("logread -e sing-box 2>/dev/null | tail -50")
+        if pf then lines = pf:read("*a") or ""; pf:close() end
+        -- logread returns sing-box's raw output, ANSI escape codes included
+        -- (singbox-logtail only strips these for LOG_FILE above) — strip
+        -- them here too so this fallback path doesn't leak "[36mINFO[0m"
+        -- garbage into the log modal.
+        -- NOTE: this used to only match "ESC[<digits/;>m" (plain SGR/color
+        -- codes). sing-box's logger — even started with --disable-color —
+        -- has been observed to still emit non-color CSI sequences around its
+        -- startup banner when stdout isn't a TTY (cursor hide/show
+        -- "ESC[?25l"/"ESC[?25h", erase-line "ESC[2K", cursor moves), which
+        -- the old pattern let straight through. Match the general CSI
+        -- grammar (ESC '[' + params 0-9;:<=>? + a final letter) instead, and
+        -- also drop stray carriage returns left behind by erase-line/redraw
+        -- sequences. Keep this in sync with strip_ansi() inlined in
+        -- install.sh (see "singbox-logtail" section) — no shared module
+        -- between the two on purpose, to keep this file dependency-free.
+        lines = lines:gsub("\27%[[%d;:<=>?]*%a", ""):gsub("\r", "")
+    end
     respond({ log = lines })
 
 elseif action == "update_sub" then
@@ -325,8 +377,9 @@ elseif action == "apply" then
         respond({ status = "ok" })
     else
         local res = os.execute("/etc/init.d/sing-box reload")
-        -- Сброс DNS-кэша: без этого правила по domain_suffix не сработают для
-        -- уже закэшированных резолвов (пакет уйдёт по старому IP, минуя правило)
+        -- Flush DNS cache: without this, domain_suffix rules won't apply to
+        -- already-cached resolutions (the packet would go out on the old IP,
+        -- bypassing the rule)
         os.execute("/etc/init.d/dnsmasq restart >/dev/null 2>&1")
         if res == 0 or res == true then respond({ status = "ok" }) else respond({ error = "Reload failed" }) end
     end

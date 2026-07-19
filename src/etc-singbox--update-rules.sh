@@ -1,24 +1,34 @@
 #!/bin/sh
 # /etc/sing-box/update-rules.sh
-# Обновление баз правил маршрутизации.
-# Поведение определяется singbox.main.route_mode:
-#   Режим 2 → geosite-ru.srs (MetaCubeX), удалить файлы режима 3
-#   Режим 3 → ru-blocked.srs + geoip-ru-blocked.srs (runetfreedom), удалить файлы режима 2
-#   Режим 1 → SRS не нужны, удалить все
+# Updates the routing rule databases.
+# Behavior is driven by singbox.main.route_mode:
+#   Mode 2 → geosite-ru.srs (MetaCubeX), remove mode-3 files
+#   Mode 3 → ru-blocked.srs + geoip-ru-blocked.srs (runetfreedom), remove mode-2 files
+#   Mode 1 → no SRS needed, remove all
 #
-# ВАЖНО: все загрузки идут через temp-файл + проверку размера, и только потом
-# atomic mv поверх боевого пути. Если загрузка не прошла проверку — рабочий
-# файл НЕ трогается (compiler.lua продолжит использовать старую, но валидную
-# базу, вместо того чтобы получить битый rule_set и уронить sing-box).
+# IMPORTANT: every download goes through a temp file + a validity check
+# (magic bytes, see check_srs_valid/check_zip_valid below), and only then an
+# atomic mv over the live path. If a download fails validation, the working
+# file is left untouched (compiler.lua keeps using the old but valid
+# database instead of getting a corrupt rule_set and crashing sing-box).
+
+# --no-reload: fetch/validate rule databases as usual but skip the final
+# "reload sing-box if running" step. Used by compiler-test.sh, which calls
+# this script per route_mode purely to get fresh SRS files for `sing-box
+# check` — it must NOT push its temporary dummy-node/route_mode UCI state
+# into the actually-running service via a real reload (see CHANGELOG).
+NO_RELOAD=0
+[ "$1" = "--no-reload" ] && NO_RELOAD=1
 
 SING_BOX_DIR="/etc/sing-box"
-# Файлы режима 3 (runetfreedom)
+# Mode 3 files (runetfreedom)
 MODE3_FILES="ru-blocked.srs geoip-ru-blocked.srs"
 MODE3_ZIP_URL="https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/sing-box.zip"
-# Файл режима 2 (MetaCubeX geosite:ru).
-# ВАЖНО: файл в репозитории называется category-ru.srs, а не ru.srs —
-# "ru.srs" отдаёт 404 (страница github, а не сам файл), из-за чего с -f
-# curl падал (exit 22), а без -f молча сохранял мусор поверх рабочего файла.
+# Mode 2 file (MetaCubeX geosite:ru).
+# IMPORTANT: the file in the repo is named category-ru.srs, not ru.srs —
+# "ru.srs" returns a 404 (a github page, not the file itself), which used to
+# make curl fail with -f (exit 22), or silently save garbage over the working
+# file without -f.
 MODE2_FILE="geosite-ru.srs"
 MODE2_URL="https://github.com/MetaCubeX/meta-rules-dat/raw/sing/geo/geosite/category-ru.srs"
 
@@ -31,13 +41,13 @@ mkdir -p "$SING_BOX_DIR"
 ROUTE_MODE=$(uci -q get singbox.main.route_mode 2>/dev/null || echo "3")
 echo "route_mode=${ROUTE_MODE}"
 
-# Проверка валидности .srs — по magic-байтам ("SRS" в начале файла), а не по
-# размеру. Легитимные geosite-категории могут весить всего несколько КБ
-# (например category-ru.srs ~7.5KB), так что порог по размеру либо пропускает
-# мусор, либо ложно бракует маленькие, но настоящие базы.
-# ВАЖНО: используем `head -c`, а не `od` — BusyBox od на роутере даёт другой
-# формат вывода (`-An -c -N3` не работает так же, как в GNU coreutils),
-# из-за чего сравнение магии всегда проваливалось бы, даже на валидном файле.
+# Validate an .srs file by its magic bytes ("SRS" at the start), not by size.
+# Legitimate geosite categories can be just a few KB (e.g. category-ru.srs
+# ~7.5KB), so a size threshold would either let garbage through or wrongly
+# reject small-but-valid databases.
+# IMPORTANT: uses `head -c`, not `od` — BusyBox od on the router formats
+# output differently (`-An -c -N3` doesn't behave like GNU coreutils), so a
+# magic-byte comparison against it would always fail, even on a valid file.
 check_srs_valid() {
     f="$1"
     [ -s "$f" ] || return 1
@@ -46,7 +56,7 @@ check_srs_valid() {
     return 0
 }
 
-# Проверка валидности .zip — по magic-байтам ("PK").
+# Validate a .zip file by its magic bytes ("PK").
 check_zip_valid() {
     f="$1"
     [ -s "$f" ] || return 1
@@ -55,9 +65,9 @@ check_zip_valid() {
     return 0
 }
 
-# ── Режим 2: geosite:ru (все в proxy кроме РУ) ────────────────────────────────
+# ── Mode 2: geosite:ru (everything via proxy except RU) ──────────────────────
 if [ "$ROUTE_MODE" = "2" ]; then
-    # Удалить файлы режима 3, если они остались
+    # Remove mode-3 files if they're still around
     for f in $MODE3_FILES; do
         rm -f "${SING_BOX_DIR}/${f}" && echo "Removed: ${f}"
     done
@@ -65,13 +75,19 @@ if [ "$ROUTE_MODE" = "2" ]; then
     echo "Downloading geosite-ru.srs (MetaCubeX)..."
 
     MODE2_OK=0
+    MODE2_CURL_RC=0
     if curl -fsL --local-port 57321-57325 --connect-timeout 15 --max-time 60 "$MODE2_URL" -o "$TMP_SRS"; then
         MODE2_OK=1
-    elif curl -fsL --local-port 57330-57334 --connect-timeout 15 --max-time 60 "$MODE2_URL" -o "$TMP_SRS"; then
-        # raw.githubusercontent.com сам может быть нестабилен в РФ напрямую (не связано со здоровьем узла) —
-        # второй попыткой качаем как раньше, через текущий активный узел
-        echo "Прямая закачка не удалась, получилось через текущий прокси-узел"
-        MODE2_OK=1
+    else
+        MODE2_CURL_RC=$?
+        if curl -fsL --local-port 57330-57334 --connect-timeout 15 --max-time 60 "$MODE2_URL" -o "$TMP_SRS"; then
+            # raw.githubusercontent.com can itself be flaky in RU directly (unrelated
+            # to node health) — retry over the currently active proxy node, as before
+            echo "Direct download failed, succeeded via the current proxy node"
+            MODE2_OK=1
+        else
+            MODE2_CURL_RC=$?
+        fi
     fi
     if [ "$MODE2_OK" = "1" ]; then
 
@@ -85,18 +101,18 @@ if [ "$ROUTE_MODE" = "2" ]; then
             exit 1
         fi
     else
-        echo "ERROR: download failed for $MODE2_URL (curl exit $?). Keeping previous file untouched."
+        echo "ERROR: download failed for $MODE2_URL (curl exit ${MODE2_CURL_RC}). Keeping previous file untouched."
         exit 1
     fi
 
-# ── Режим 3: ru-blocked (дефолт, обход РКН) ───────────────────────────────────
+# ── Mode 3: ru-blocked (default, bypass RKN blocking) ─────────────────────────
 elif [ "$ROUTE_MODE" = "3" ]; then
-    # Удалить файл режима 2, если остался
+    # Remove the mode-2 file if it's still around
     rm -f "${SING_BOX_DIR}/${MODE2_FILE}" && echo "Removed: ${MODE2_FILE}"
 
     echo "Downloading sing-box.zip (runetfreedom)..."
     if ! curl -fsL --local-port 57321-57325 --connect-timeout 15 --max-time 180 "$MODE3_ZIP_URL" -o "$TMP_ZIP"; then
-        echo "Прямая закачка не удалась, пробую через текущий прокси-узел..."
+        echo "Direct download failed, retrying via the current proxy node..."
         if ! curl -fsL --local-port 57330-57334 --connect-timeout 15 --max-time 180 "$MODE3_ZIP_URL" -o "$TMP_ZIP"; then
             echo "ERROR: download failed for $MODE3_ZIP_URL. Keeping previous files untouched."
             exit 1
@@ -130,7 +146,7 @@ elif [ "$ROUTE_MODE" = "3" ]; then
         exit 1
     fi
 
-# ── Режимы 1 и 4: SRS не нужны ────────────────────────────────────────────────
+# ── Mode 1 (and any other value): no SRS needed ───────────────────────────────
 else
     echo "route_mode=${ROUTE_MODE}: no SRS files needed"
     for f in $MODE3_FILES $MODE2_FILE; do
@@ -138,8 +154,8 @@ else
     done
 fi
 
-# ── Перезагрузить sing-box если запущен ───────────────────────────────────────
-if pidof sing-box > /dev/null 2>&1; then
+# ── Reload sing-box if it's running ───────────────────────────────────────────
+if [ "$NO_RELOAD" != "1" ] && pidof sing-box > /dev/null 2>&1; then
     echo "Reloading sing-box..."
     /etc/init.d/sing-box reload
 fi
