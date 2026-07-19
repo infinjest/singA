@@ -16,7 +16,7 @@ jobs:
         run: |
           RELEASE=$(curl -s https://api.github.com/repos/Leadaxe/sing-box-lx/releases/latest)
           TAG=$(echo "$RELEASE" | jq -r .tag_name)
-          BODY=$(echo "$RELEASE" | jq -r .body | head -c 500)  
+          BODY=$(echo "$RELEASE" | jq -r .body | head -c 500)
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "body<<EOF" >> $GITHUB_OUTPUT
           echo "$BODY" >> $GITHUB_OUTPUT
@@ -66,5 +66,5 @@ jobs:
           | while read -r OLD_TAG; do
               echo "Removing superseded mirror: ${OLD_TAG}"
               gh release delete "${OLD_TAG}" --repo "${{ github.repository }}" --yes --cleanup-tag \
-                || echo "::warning::Не удалось удалить релиз/тег ${OLD_TAG} (возможно, тег уже отсутствует)"
+                || echo "::warning::Failed to delete release/tag ${OLD_TAG} (the tag may already be gone)"
             done

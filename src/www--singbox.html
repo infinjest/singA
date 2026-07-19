@@ -45,6 +45,9 @@
         .btn-sm { padding:4px 10px; font-size:.85rem; }
         .toggle-off { background: var(--border); color: #94a3b8; }
         .toggle-dirty { background: #f59e0b; color: #1e293b; font-weight: 600; }
+        .suggest-box { position: absolute; left: 0; right: 0; top: 100%; margin-top: 2px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; max-height: 180px; overflow-y: auto; z-index: 50; box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+        .suggest-item { padding: 7px 12px; font-size: .85rem; cursor: pointer; }
+        .suggest-item:hover, .suggest-item.active { background: var(--accent); color: #fff; }
     </style>
 </head>
 <body>
@@ -101,29 +104,30 @@
 
                 <div style="display:flex;gap:15px;flex-wrap:wrap;margin-top:4px">
                     <div class="form-group" style="flex:1;min-width:220px">
-                        <label>Upstream DNS (для заблокированных доменов)</label>                       
+                        <label>Upstream DNS (для заблокированных доменов)</label>
                         <select id="cfg-dns-select" onchange="onDnsSelectChange('dns')">
-                            <option value="https://dns.cloudflare.com/dns-query">Cloudflare DoH (дефолт)</option>
-                            <option value="https://dns.adguard-dns.com/dns-query">AdGuard DoH</option>
-                            <option value="https://dns.google/dns-query">Google DoH</option>
+                            <option value="https://dns.cloudflare.com/dns-query">Cloudflare DoH https://dns.cloudflare.com/dns-query (дефолт)</option>
+                            <option value="https://dns.adguard-dns.com/dns-query">AdGuard DoH https://dns.adguard-dns.com/dns-query</option>
+                            <option value="https://dns.google/dns-query">Google DoH https://dns.google/dns-query</option>
                             <option value="__custom__">Задать свой...</option>
                         </select>
-                        <input type="text" id="cfg-dns" placeholder="https://..." style="margin-top:6px;display:none" oninput="markDirty()">
+                        <input type="text" id="cfg-dns" placeholder="https://host[:порт][/путь]" style="margin-top:6px;display:none" oninput="markDirty()">
                         <select id="cfg-dns-remote-detour" style="margin-top:6px" onchange="markDirty()">
-                            <option value="direct">Напрямую (быстрее, если провайдер не режет этот DNS)</option>
+                            <option value="direct">Напрямую (быстрее, если провайдер не режет этот DNS — дефолт)</option>
                             <option value="proxy">Через прокси-узел (надёжнее, если провайдер режет)</option>
                         </select>
+                        <label style="display:flex;align-items:center;gap:6px;margin-top:8px;color:#94a3b8;font-size:.85rem"><input type="checkbox" id="cfg-block-quic" onchange="markDirty()"> Блокировать QUIC (UDP/443, дефолт)</label>
                     </div>
                     <div class="form-group" style="flex:1;min-width:220px">
                         <label>Local DNS (напрямую)</label>
                         <select id="cfg-local-dns-select" onchange="onDnsSelectChange('local')">
-                            <option value="tcp://77.88.8.8">Яндекс 77.88.8.8 (дефолт)</option>
+                            <option value="tcp://1.1.1.1">Cloudflare 1.1.1.1 (дефолт)</option>
+                            <option value="tcp://77.88.8.8">Яндекс 77.88.8.8</option>
                             <option value="tcp://94.140.14.14">AdGuard 94.140.14.14</option>
-                            <option value="tcp://1.1.1.1">Cloudflare 1.1.1.1</option>
                             <option value="tcp://8.8.8.8">Google 8.8.8.8</option>
                             <option value="__custom__">Задать свой...</option>
                         </select>
-                        <input type="text" id="cfg-local-dns" placeholder="tcp://..." style="margin-top:6px;display:none" oninput="markDirty()">
+                        <input type="text" id="cfg-local-dns" placeholder="tcp://... (или tls://host[:порт] для DoT)" style="margin-top:6px;display:none" oninput="markDirty()">
                     </div>
                 </div>
 
@@ -140,8 +144,8 @@
                 <div style="background:var(--bg);padding:15px;border-radius:6px;margin-bottom:15px;border:1px solid var(--border)">
                     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
                         <div style="flex:1;min-width:140px"><label>IP источника (LAN):</label><input type="text" id="rule-source" placeholder="Пусто = для всех"></div>
-                        <div style="flex:2;min-width:180px"><label>Домены (через запятую, можно geosite:name — категории сервисов):</label><input type="text" id="rule-domain" placeholder="google.com, geosite:netflix"></div>
-                        <div style="flex:1;min-width:140px"><label>IP назначения:</label><input type="text" id="rule-ip" placeholder="8.8.8.8"></div>
+                        <div style="flex:2;min-width:180px;position:relative"><label>Домены (можно через запятую, можно geosite:name):</label><input type="text" id="rule-domain" placeholder="user.papervpn.lol, geosite:google-gemini" autocomplete="off" oninput="suggestCategory(this)" onblur="setTimeout(()=>hideSuggest('rule-domain'),150)"><div id="rule-domain-suggest" class="suggest-box" hidden></div></div>
+                        <div style="flex:1;min-width:140px"><label>IP назначения:</label><input type="text" id="rule-ip" placeholder="Пусто, если заданы домены"></div>
                         <div style="flex:1;min-width:120px">
                             <label>Действие:</label>
                             <select id="rule-outbound"><option value="proxy">Proxy (Туннель)</option><option value="direct">Direct (Напрямую)</option></select>
@@ -300,13 +304,13 @@ async function saveEditNode() {
     const sec  = document.getElementById('edit-section').value;
     const type = document.getElementById('edit-type').value;
     const isAwg = type === 'amneziawg' || type === 'wireguard';
-    
+
     const node = {
         tag: document.getElementById('edit-tag').value,
         server: document.getElementById('edit-server').value,
         server_port: document.getElementById('edit-port').value,
     };
-    
+
     if (!isAwg) {
         node.uuid      = document.getElementById('edit-uuid').value;
         node.security  = document.getElementById('edit-security').value;
@@ -317,8 +321,8 @@ async function saveEditNode() {
         node.private_key     = document.getElementById('edit-privkey').value;
         node.peer_public_key = document.getElementById('edit-pubkey').value;
         node.local_address   = document.getElementById('edit-localaddr').value;
-        
-        // Сбор параметров обфускации только для AmneziaWG
+
+        // Only collect obfuscation params for AmneziaWG
         if (type === 'amneziawg') {
             node.jc   = document.getElementById('edit-jc').value || "0";
             node.jmin = document.getElementById('edit-jmin').value || "0";
@@ -334,10 +338,10 @@ async function saveEditNode() {
             node.h4   = document.getElementById('edit-h4').value || "0";
         }
     }
-    
+
     const res = await ubusCall("singbox", "edit_node", { section: sec, node });
     if (res.error) { alert('Ошибка: ' + res.error); return; }
-    
+
     await ubusCall("singbox", "apply");
     closeEditModal();
     loadData();
@@ -423,7 +427,7 @@ async function updateStatus() {
 function prettyNodeTag(tag) {
     if (tag === 'direct') return 'Прямое соединение';
     let t = tag.replace(/^(node|sub)_\d+_/, '');
-    // Длинный тег (часто из подписки) ломает верстку шапки — берём хвост после # или @
+    // A long tag (often from a subscription) breaks the header layout — take the tail after # or @
     const idx = Math.max(t.lastIndexOf('#'), t.lastIndexOf('@'));
     if (idx !== -1) t = t.substring(idx + 1);
     return t;
@@ -477,11 +481,59 @@ async function downloadConfig() {
     } catch(e) { alert('Ошибка: ' + e); }
 }
 
-async function showLog() {
+async function loadLogContent() {
     try {
         const r = await ubusCall("singbox", "get_log");
-        alert(r.log || 'Лог пуст');
-    } catch(e) { alert('Ошибка: ' + e); }
+        document.getElementById('log-content').textContent = r.log || 'Лог пуст';
+        return true;
+    } catch(e) { alert('Ошибка: ' + e); return false; }
+}
+
+async function showLog() {
+    if (await loadLogContent()) {
+        document.getElementById('log-modal').style.display = 'flex';
+    }
+}
+
+async function refreshLog() {
+    // Log doesn't push updates on its own — this just re-fetches get_log
+    // and replaces the content, modal stays open, scroll position resets
+    // to the top (new content, old scroll offset wouldn't mean anything).
+    if (await loadLogContent()) {
+        showToast('Лог обновлён');
+    }
+}
+
+function closeLogModal() {
+    document.getElementById('log-modal').style.display = 'none';
+}
+
+async function copyLog() {
+    const text = document.getElementById('log-content').textContent;
+    // navigator.clipboard requires a secure context (HTTPS/localhost) — this
+    // UI is served over plain HTTP on the LAN, the exact reason the "Share"
+    // button's clipboard write was removed in 0.10.4. Try it anyway (works
+    // if someone fronts the UI with HTTPS), then fall back to the legacy
+    // selection-based copy, which still works on http:// origins.
+    if (window.isSecureContext && navigator.clipboard) {
+        try {
+            await navigator.clipboard.writeText(text);
+            showToast('Лог скопирован в буфер');
+            return;
+        } catch (e) { /* fall through to legacy method */ }
+    }
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        const copied = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (copied) { showToast('Лог скопирован в буфер'); return; }
+    } catch (e) { /* ignore, fall through to manual instructions below */ }
+    alert('Не удалось скопировать автоматически — выделите текст в окне лога вручную (Ctrl+C).');
 }
 
 function markDirty() {
@@ -516,7 +568,7 @@ function applyRouteMode() {
     const show = (mode === '3') ? '' : 'none';
     document.getElementById('card-routing-rules').style.display = show;
     document.getElementById('card-dns-rules').style.display = show;
-    // Режим 1 ("всё в proxy") не использует базы geosite/geoip — обновлять нечего
+    // Mode 1 ("everything via proxy") doesn't use geosite/geoip databases — nothing to update
     document.getElementById('cfg-cron-group').style.display = (mode === '1') ? 'none' : '';
 }
 
@@ -530,7 +582,8 @@ async function addDnsRule() {
     const server = document.getElementById('dns-rule-server').value.trim();
     const viaProxy = document.getElementById('dns-rule-via-proxy').checked;
     if (!domain || !server) { alert('Заполните домены и DNS сервер'); return; }
-    await ubusCall("singbox", "add_dns_rule", { rule: { domain, server, via_proxy: viaProxy } });
+    const res = await ubusCall("singbox", "add_dns_rule", { rule: { domain, server, via_proxy: viaProxy } });
+    if (res.error) { alert('Ошибка: ' + res.error); return; }
     document.getElementById('dns-rule-domain').value = '';
     document.getElementById('dns-rule-server').value = '';
     document.getElementById('dns-rule-via-proxy').checked = false;
@@ -558,13 +611,14 @@ async function loadData() {
     document.getElementById('cfg-cron').value       = cfg.main?.cron_schedule || "0 4 * * 1";
 
     setDnsSelectValue('dns',   cfg.main?.custom_dns || "https://dns.cloudflare.com/dns-query");
-    setDnsSelectValue('local', cfg.main?.local_dns  || "tcp://77.88.8.8");
+    setDnsSelectValue('local', cfg.main?.local_dns  || "tcp://1.1.1.1");
     document.getElementById('cfg-dns-remote-detour').value = cfg.main?.dns_remote_detour || "direct";
+    document.getElementById('cfg-block-quic').checked = (cfg.main?.block_quic ?? "1") !== "0";
     applyRouteMode();
 
     let rHtml = '';
     Object.entries(cfg.custom_rules || {}).forEach(([sec, r]) => {
-        if (!r.outbound) return; 
+        if (!r.outbound) return;
         const badgeColor = r.outbound === 'proxy' ? 'color:var(--accent); background:rgba(37,99,235,0.1)' : 'color:var(--success); background:rgba(16,185,129,0.1)';
         rHtml += `<tr><td>${esc(r.source) || 'Все (LAN)'}</td><td style="word-break:break-all">${esc(r.domain) || '—'}</td><td>${esc(r.ip) || '—'}</td>
             <td><span style="padding:4px 8px; border-radius:4px; font-size:.8rem; font-weight:600; ${badgeColor}">${r.outbound.toUpperCase()}</span></td>
@@ -624,6 +678,45 @@ function showToast(msg) {
     t._hideTimer = setTimeout(() => { t.style.opacity = '0'; }, 2500);
 }
 
+// Geosite category list for autocompleting the "Domains" field (see addUserRule).
+// Static, current as of the 0.10.5 release — checked against the
+// MetaCubeX/meta-rules-dat repo (sing branch, geo/geosite/*.srs). Not
+// exhaustive and doesn't need to be: if a category isn't in the list, its
+// exact name can still be entered manually — the .srs is downloaded on
+// saving the rule either way (see rpcd add_rule); these are just shortcuts
+// for common cases. Update as needed before each release.
+const geositeCategories = [
+    'google', 'google-gemini', 'youtube', 'github', 'microsoft', 'onedrive', 'apple', 'applemusic',
+    'netflix', 'spotify', 'twitch', 'twitter', 'tiktok', 'telegram', 'discord', 'reddit', 'facebook',
+    'instagram', 'whatsapp', 'amazon', 'openai', 'pixiv', 'bilibili', 'biliintl', 'ehentai', 'bahamut',
+    'abema', 'steam', 'epicgames', 'disney', 'dropbox', 'icloud', 'cloudflare', 'linkedin', 'category-ai-!cn',
+    'category-games', 'category-scholar-!cn', 'category-social-media-!cn', 'category-porn', 'geolocation-!cn',
+    'private', 'tracker', 'proxy', 'proxymedia', 'cn'
+];
+
+function hideSuggest(inputId) {
+    const box = document.getElementById(inputId + '-suggest');
+    if (box) box.hidden = true;
+}
+
+function suggestCategory(input) {
+    const box = document.getElementById(input.id + '-suggest');
+    if (!box) return;
+    const m = input.value.match(/geosite:([\w\-]*)$/);
+    if (!m || !geositeCategories.length) { box.hidden = true; return; }
+    const q = m[1].toLowerCase();
+    const matches = geositeCategories.filter(c => c.toLowerCase().includes(q)).slice(0, 8);
+    box.innerHTML = matches.map(c => `<div class="suggest-item" onclick="pickCategory('${input.id}','${esc(c)}')">geosite:${esc(c)}</div>`).join('');
+    box.hidden = matches.length === 0;
+}
+
+function pickCategory(inputId, cat) {
+    const input = document.getElementById(inputId);
+    input.value = input.value.replace(/geosite:[\w\-]*$/, 'geosite:' + cat);
+    hideSuggest(inputId);
+    input.focus();
+}
+
 async function addUserRule() {
     const source = document.getElementById('rule-source').value.trim(), domain = document.getElementById('rule-domain').value.trim(), ip = document.getElementById('rule-ip').value.trim();
     if (!source && !domain && !ip) { alert("Укажите хотя бы одно условие."); return; }
@@ -653,13 +746,15 @@ async function saveSettings() {
     const newMode = document.getElementById('cfg-route-mode').value;
     const modeChanged = loadedRouteMode !== null && newMode !== loadedRouteMode;
     try {
-        await ubusCall("singbox", "set_settings", { settings: {
+        const setRes = await ubusCall("singbox", "set_settings", { settings: {
             route_mode: newMode,
             cron_schedule: document.getElementById('cfg-cron').value,
             custom_dns: dnsVal || "https://dns.cloudflare.com/dns-query",
-            local_dns: localDnsVal || "tcp://77.88.8.8",
-            dns_remote_detour: document.getElementById('cfg-dns-remote-detour').value
+            local_dns: localDnsVal || "tcp://1.1.1.1",
+            dns_remote_detour: document.getElementById('cfg-dns-remote-detour').value,
+            block_quic: document.getElementById('cfg-block-quic').checked ? "1" : "0"
         }});
+        if (setRes.error) { alert('Ошибка: ' + setRes.error); return; }
         const res = await ubusCall("singbox", "apply");
         if (res.error) {
             alert('Ошибка: ' + res.error);
@@ -694,30 +789,30 @@ async function syncSub(sec) {
 
 async function deleteItem(sec, isRule = false) {
     if (!confirm('Удалить выбранный элемент?')) return;
-    
+
     const method = isRule ? "del_rule" : "del_node";
     const res = await ubusCall("singbox", method, { section: sec });
-    
+
     if (res.error) {
         alert('Ошибка удаления: ' + res.error);
         return;
     }
-    await ubusCall("singbox", "apply"); 
+    await ubusCall("singbox", "apply");
     loadData();
     showToast(isRule ? 'Правило удалено' : 'Узел удалён');
 }
 
-// ── Универсальный Импорт: .vpn (JSON) & .conf (INI) ──
+// ── Universal import: .vpn (JSON) & .conf (INI) ──
 async function importVpnFile(e) {
     const file = e.target.files[0];
     if (!file) return;
     e.target.value = '';
-    
+
     try {
                 let text = '';
                 const rawText = (await file.text()).trim().replace(/^vpn:\/\//, '');
 
-                // 1. base64url → base64 + Zlib/raw-deflate декомпрессия (стандартный .vpn от Amnezia)
+                // 1. base64url → base64 + Zlib/raw-deflate decompression (standard Amnezia .vpn)
                 let b64 = rawText.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
                 while (b64.length % 4) b64 += '=';
 
@@ -737,7 +832,7 @@ async function importVpnFile(e) {
 
                 let node = null;
 
-        // 2. Попытка парсинга JSON (.vpn формат)
+        // 2. Try parsing as JSON (.vpn format)
         try {
             const data = JSON.parse(text);
             let container = null;
@@ -747,11 +842,11 @@ async function importVpnFile(e) {
                 container = data.containers['amnezia-awg2'] || data.containers['amnezia-awg'] || data.containers.amneziawg || data.containers.awg;
             }
             if (!container) throw new Error('Контейнер AmneziaWG не найден');
-            // в экспортах Amnezia 2.x сама конфигурация лежит во вложенном объекте .awg,
-            // а не в самом контейнере
+            // in Amnezia 2.x exports, the actual config lives in a nested .awg object,
+            // not in the container itself
             const awg = container.awg || container;
-            // last_config приходит как JSON, сериализованный в строку (не объект) —
-            // нужен отдельный JSON.parse, иначе все поля внутри будут undefined
+            // last_config arrives as JSON serialized into a string (not an object) —
+            // needs its own JSON.parse, or every field inside would be undefined
             let lc = {};
             if (typeof awg.last_config === 'string') {
                 try { lc = JSON.parse(awg.last_config); } catch { lc = {}; }
@@ -774,7 +869,7 @@ async function importVpnFile(e) {
                 pre_shared_key: lc.psk_key || lc.psk || lc.preshared_key || lc.pre_shared_key || awg.psk || ''
             };
         } catch (jsonError) {
-            // 3. Если JSON упал, пробуем парсить как текстовый .conf (INI) формат WireGuard/AWG
+            // 3. If JSON parsing fails, try parsing as WireGuard/AWG's text .conf (INI) format
             if (text.includes('[Interface]') && text.includes('[Peer]')) {
                 const lines = text.split('\n');
                 let conf = {};
@@ -782,7 +877,7 @@ async function importVpnFile(e) {
                     const match = l.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.+)$/);
                     if (match) conf[match[1].toLowerCase()] = match[2].trim();
                 });
-                
+
                 const endpoint = conf.endpoint ? conf.endpoint.split(':') : [];
                 node = {
                     type: 'amneziawg', tag: 'AWG_Conf_' + (endpoint[1] || '443'),
@@ -815,7 +910,7 @@ async function importVpnFile(e) {
     }
 }
 
-// ── Парсер VLESS URI ──
+// ── VLESS URI parser ──
 async function importVlessUri() {
     const uri = prompt("Вставьте VLESS ссылку (vless://...):");
     if (!uri) return;
@@ -824,7 +919,7 @@ async function importVlessUri() {
     try {
         const url = new URL(uri);
         const params = new URLSearchParams(url.search);
-        
+
         const node = {
             type: "vless",
             tag: decodeURIComponent(url.hash.substring(1)) || `VLESS_${url.hostname}`,
@@ -845,7 +940,7 @@ async function importVlessUri() {
 
         const res = await ubusCall("singbox", "add_node", { node });
         if (res.error) throw new Error(res.error);
-        
+
         alert("VLESS узел успешно добавлен!");
         loadData();
     } catch (e) {
@@ -853,6 +948,17 @@ async function importVlessUri() {
     }
 }
 </script>
+<div id="log-modal" class="modal-overlay" style="display:none">
+    <div class="modal" style="width:820px">
+        <h3>Лог sing-box — 100 последних строк</h3>
+        <pre id="log-content" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;max-height:60vh;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.8rem;line-height:1.4;white-space:pre-wrap;word-break:break-all"></pre>
+        <div class="modal-footer">
+            <button class="btn" style="background:var(--border)" onclick="refreshLog()">Обновить</button>
+            <button class="btn" style="background:var(--border)" onclick="copyLog()">Скопировать в буфер</button>
+            <button class="btn" style="background:var(--border)" onclick="closeLogModal()">Закрыть</button>
+        </div>
+    </div>
+</div>
 <div id="edit-modal" class="modal-overlay" style="display:none">
     <div class="modal">
         <h3>Редактировать узел</h3>

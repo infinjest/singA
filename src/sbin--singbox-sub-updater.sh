@@ -36,11 +36,11 @@ function url_decode(str,    res, i, c, hex) {
 {
     sub(/\r$/, "", $0)
     if (!match($0, /^(vless|amneziawg|wireguard):\/\//)) next
-    
+
     type = "vless"
     if (match($0, /^amneziawg:\/\//)) type = "amneziawg"
     if (match($0, /^wireguard:\/\//)) type = "wireguard"
-    
+
     sub(/^(vless|amneziawg|wireguard):\/\//, "", $0)
     line = $0
     tag = ""; query = ""; uuid = ""; host = ""; port = "443"
@@ -54,7 +54,7 @@ function url_decode(str,    res, i, c, hex) {
     idx = index(line, "@")
     if (idx > 0) { uuid = substr(line, 1, idx - 1); addr = substr(line, idx + 1) } else { addr = line }
 
-    # Безопасный парсинг IPv6 (снятие квадратных скобок)
+    # Safe IPv6 parsing (strip square brackets)
     if (match(addr, /^\[.*\]/)) {
         cb = index(addr, "]")
         host = substr(addr, 2, cb - 2)
@@ -68,12 +68,12 @@ function url_decode(str,    res, i, c, hex) {
 
     security = "none"; sni = ""; pbk = ""; sid = ""
     transport = "none"; path = ""; thost = ""; mode = ""
-    
+
     awg_pubkey = ""; awg_addr = ""; awg_jc = "0"
     awg_jmin = "0"; awg_jmax = "0"
     awg_s1 = "0"; awg_s2 = "0"
     awg_h1 = "0"; awg_h2 = "0"; awg_h3 = "0"; awg_h4 = "0"
-    
+
     if (query != "") {
         n = split(query, params, "&")
         for (i = 1; i <= n; i++) {
@@ -86,7 +86,7 @@ function url_decode(str,    res, i, c, hex) {
             if (kv[1] == "path")     path = url_decode(kv[2])
             if (kv[1] == "host")     thost = url_decode(kv[2])
             if (kv[1] == "mode")     mode = kv[2]
-            
+
             if (kv[1] == "publickey") awg_pubkey = kv[2]
             if (kv[1] == "address")   awg_addr   = url_decode(kv[2])
             if (kv[1] == "jc")        awg_jc     = kv[2]
@@ -101,16 +101,29 @@ function url_decode(str,    res, i, c, hex) {
         }
     }
 
-    # Тотальная защита от JSON инъекций
+    # Escape everything that could break out of a JSON string
     gsub(/["\\]/, "\\\\&", tag)
     gsub(/["\\]/, "\\\\&", host)
     gsub(/["\\]/, "\\\\&", uuid)
+    gsub(/["\\]/, "\\\\&", security)
     gsub(/["\\]/, "\\\\&", sni)
+    gsub(/["\\]/, "\\\\&", pbk)
+    gsub(/["\\]/, "\\\\&", sid)
+    gsub(/["\\]/, "\\\\&", transport)
     gsub(/["\\]/, "\\\\&", path)
     gsub(/["\\]/, "\\\\&", thost)
     gsub(/["\\]/, "\\\\&", mode)
     gsub(/["\\]/, "\\\\&", awg_pubkey)
     gsub(/["\\]/, "\\\\&", awg_addr)
+    gsub(/["\\]/, "\\\\&", awg_jc)
+    gsub(/["\\]/, "\\\\&", awg_jmin)
+    gsub(/["\\]/, "\\\\&", awg_jmax)
+    gsub(/["\\]/, "\\\\&", awg_s1)
+    gsub(/["\\]/, "\\\\&", awg_s2)
+    gsub(/["\\]/, "\\\\&", awg_h1)
+    gsub(/["\\]/, "\\\\&", awg_h2)
+    gsub(/["\\]/, "\\\\&", awg_h3)
+    gsub(/["\\]/, "\\\\&", awg_h4)
 
     print "BEGIN_NODE"
     print "type=" type
@@ -128,7 +141,7 @@ function url_decode(str,    res, i, c, hex) {
     print "mode=" mode
     print "peer_public_key=" awg_pubkey
     print "local_address="   awg_addr
-	print "jc=" awg_jc
+    print "jc=" awg_jc
     print "jmin=" awg_jmin
     print "jmax=" awg_jmax
     print "s1="   awg_s1
@@ -144,7 +157,7 @@ EOF
 fetch_and_decode() {
     local url="$1"
     local raw="/tmp/sub_raw.tmp"
-    curl -sLk --max-filesize 2097152 --connect-timeout 10 --max-time 30 "$url" > "$raw"
+    curl -sL --max-filesize 2097152 --connect-timeout 10 --max-time 30 "$url" > "$raw"
     [ $? -eq 0 ] && [ -s "$raw" ] || { rm -f "$raw"; return 1; }
 
     if ! grep -qE "(vless|amneziawg|wireguard)://" "$raw"; then
@@ -187,7 +200,7 @@ build_nodes_json() {
             mode=*)            n_mode="${line#*=}" ;;
             peer_public_key=*) n_pub="${line#*=}"  ;;
             local_address=*)   n_addr="${line#*=}" ;;
-			jc=*)              n_jc="${line#*=}"   ;;
+            jc=*)              n_jc="${line#*=}"   ;;
             jmin=*)            n_jm="${line#*=}"   ;;
             jmax=*)            n_jx="${line#*=}"   ;;
             s1=*)              n_s1="${line#*=}"   ;;
@@ -226,7 +239,8 @@ process_subscription() {
     awk -f /tmp/sub_parser.awk "$file_path" > /tmp/parsed_nodes.txt
     rm -f "$file_path"
 
-    local node_count=$(grep -c "^BEGIN_NODE$" /tmp/parsed_nodes.txt 2>/dev/null || echo 0)
+    local node_count=$(grep -c "^BEGIN_NODE$" /tmp/parsed_nodes.txt 2>/dev/null)
+    node_count=${node_count:-0}
     if [ "$node_count" -eq 0 ]; then
         logger -t singbox-sub "No nodes parsed from: ${sub_sec}"
         rm -f /tmp/parsed_nodes.txt
