@@ -177,7 +177,7 @@ elseif action == "add_node" then
         type=true, tag=true, server=true, server_port=true, uuid=true, security=true, sni=true, pbk=true, sid=true,
         private_key=true, peer_public_key=true, local_address=true, jc=true, jmin=true, jmax=true, s1=true, s2=true,
         s3=true, s4=true, pre_shared_key=true, h1=true, h2=true, h3=true, h4=true,
-        transport=true, path=true, thost=true, mode=true, enabled=true
+        transport=true, path=true, thost=true, mode=true, flow=true, enabled=true
     }
     if req.node.server then
         local ok, err = validate.dns_addr(req.node.server)
@@ -206,7 +206,7 @@ elseif action == "edit_node" then
         tag=true, server=true, server_port=true, uuid=true, security=true, sni=true, pbk=true, sid=true,
         private_key=true, peer_public_key=true, local_address=true, jc=true, jmin=true, jmax=true, s1=true, s2=true,
         s3=true, s4=true, pre_shared_key=true, h1=true, h2=true, h3=true, h4=true,
-        transport=true, path=true, thost=true, mode=true, enabled=true
+        transport=true, path=true, thost=true, mode=true, flow=true, enabled=true
     }
     for k, v in pairs(req.node) do
         if allowed[k] then

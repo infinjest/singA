@@ -77,7 +77,9 @@ init_routing() {
     nft add element inet singbox bypass_v6 { ::1/128, fc00::/7, fe80::/10, 2001:db8::/32, ::ffff:0:0/96 } 2>/dev/null || true
 
     nft add rule inet singbox prerouting meta mark 0xff return
-    nft add rule inet singbox prerouting socket transparent 1 meta mark set "${TPROXY_MARK}" accept
+	# TCP only: sing-box's UDP write-back socket lingers and can silently
+    # trap new DNS queries. TCP has no such socket (conntrack).
+    nft add rule inet singbox prerouting meta l4proto tcp socket transparent 1 meta mark set "${TPROXY_MARK}" accept
 
     nft add rule inet singbox prerouting ip  protocol tcp th dport 53 tproxy ip  to :"${tproxy_port}" meta mark set "${TPROXY_MARK}" accept
     nft add rule inet singbox prerouting ip  protocol udp th dport 53 tproxy ip  to :"${tproxy_port}" meta mark set "${TPROXY_MARK}" accept

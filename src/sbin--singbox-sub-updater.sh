@@ -67,7 +67,7 @@ function url_decode(str,    res, i, c, hex) {
     if (tag == "") tag = "Node_" host "_" port
 
     security = "none"; sni = ""; pbk = ""; sid = ""
-    transport = "none"; path = ""; thost = ""; mode = ""
+    transport = "none"; path = ""; thost = ""; mode = ""; flow = ""
 
     awg_pubkey = ""; awg_addr = ""; awg_jc = "0"
     awg_jmin = "0"; awg_jmax = "0"
@@ -86,6 +86,7 @@ function url_decode(str,    res, i, c, hex) {
             if (kv[1] == "path")     path = url_decode(kv[2])
             if (kv[1] == "host")     thost = url_decode(kv[2])
             if (kv[1] == "mode")     mode = kv[2]
+            if (kv[1] == "flow")     flow = kv[2]
 
             if (kv[1] == "publickey") awg_pubkey = kv[2]
             if (kv[1] == "address")   awg_addr   = url_decode(kv[2])
@@ -113,6 +114,7 @@ function url_decode(str,    res, i, c, hex) {
     gsub(/["\\]/, "\\\\&", path)
     gsub(/["\\]/, "\\\\&", thost)
     gsub(/["\\]/, "\\\\&", mode)
+    gsub(/["\\]/, "\\\\&", flow)
     gsub(/["\\]/, "\\\\&", awg_pubkey)
     gsub(/["\\]/, "\\\\&", awg_addr)
     gsub(/["\\]/, "\\\\&", awg_jc)
@@ -139,6 +141,7 @@ function url_decode(str,    res, i, c, hex) {
     print "path=" path
     print "thost=" thost
     print "mode=" mode
+    print "flow=" flow
     print "peer_public_key=" awg_pubkey
     print "local_address="   awg_addr
     print "jc=" awg_jc
@@ -181,7 +184,7 @@ build_nodes_json() {
             BEGIN_NODE)
                 n_t=""; n_tag=""; n_srv=""; n_port="443"
                 n_id=""; n_sec="none"; n_sni=""; n_pbk=""; n_sid=""
-                n_trn="none"; n_path=""; n_thost=""; n_mode=""
+                n_trn="none"; n_path=""; n_thost=""; n_mode=""; n_flow=""
                 n_pub=""; n_addr=""; n_jm="0"; n_jx="0"
                 n_jc="0"; n_s1="0"; n_s2="0"; n_h1="0"; n_h2="0"; n_h3="0"; n_h4="0"
                 ;;
@@ -198,6 +201,7 @@ build_nodes_json() {
             path=*)            n_path="${line#*=}" ;;
             thost=*)           n_thost="${line#*=}" ;;
             mode=*)            n_mode="${line#*=}" ;;
+            flow=*)            n_flow="${line#*=}" ;;
             peer_public_key=*) n_pub="${line#*=}"  ;;
             local_address=*)   n_addr="${line#*=}" ;;
             jc=*)              n_jc="${line#*=}"   ;;
@@ -215,7 +219,7 @@ build_nodes_json() {
                     if [ "$n_t" = "amneziawg" ]; then
                         json_out="${json_out}{\"type\":\"${n_t}\",\"tag\":\"${n_tag}\",\"server\":\"${n_srv}\",\"server_port\":\"${n_port}\",\"uuid\":\"${n_id}\",\"security\":\"${n_sec}\",\"sni\":\"${n_sni}\",\"pbk\":\"${n_pbk}\",\"sid\":\"${n_sid}\",\"transport\":\"${n_trn}\",\"path\":\"${n_path}\",\"thost\":\"${n_thost}\",\"mode\":\"${n_mode}\",\"peer_public_key\":\"${n_pub}\",\"local_address\":\"${n_addr}\",\"jc\":\"${n_jc}\",\"jmin\":\"${n_jm}\",\"jmax\":\"${n_jx}\",\"s1\":\"${n_s1}\",\"s2\":\"${n_s2}\",\"h1\":\"${n_h1}\",\"h2\":\"${n_h2}\",\"h3\":\"${n_h3}\",\"h4\":\"${n_h4}\"}"
                     else
-                        json_out="${json_out}{\"type\":\"${n_t}\",\"tag\":\"${n_tag}\",\"server\":\"${n_srv}\",\"server_port\":\"${n_port}\",\"uuid\":\"${n_id}\",\"security\":\"${n_sec}\",\"sni\":\"${n_sni}\",\"pbk\":\"${n_pbk}\",\"sid\":\"${n_sid}\",\"transport\":\"${n_trn}\",\"path\":\"${n_path}\",\"thost\":\"${n_thost}\",\"mode\":\"${n_mode}\",\"peer_public_key\":\"${n_pub}\",\"local_address\":\"${n_addr}\"}"
+                        json_out="${json_out}{\"type\":\"${n_t}\",\"tag\":\"${n_tag}\",\"server\":\"${n_srv}\",\"server_port\":\"${n_port}\",\"uuid\":\"${n_id}\",\"security\":\"${n_sec}\",\"sni\":\"${n_sni}\",\"pbk\":\"${n_pbk}\",\"sid\":\"${n_sid}\",\"transport\":\"${n_trn}\",\"path\":\"${n_path}\",\"thost\":\"${n_thost}\",\"mode\":\"${n_mode}\",\"flow\":\"${n_flow}\",\"peer_public_key\":\"${n_pub}\",\"local_address\":\"${n_addr}\"}"
                     fi
                     first=0
                 fi

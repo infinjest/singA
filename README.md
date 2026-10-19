@@ -12,7 +12,7 @@ sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install
 
 **Протоколы**
 - AmneziaWG2 - импорт файла `amnezia_config.vpn`, сгенерированного приложением AmneziaVPN
-- vless + xhttp + reality - импорт по ссылке `vless://` (поддерживается основной ключ PaperVPN)
+- vless + xhttp/tcp + reality - импорт по ссылке `vless://` (поддерживается основной ключ PaperVPN)
 
 **Маршрутизация**
 - 3 режима: 1) всё в proxy; 2) всё в proxy, кроме РФ-доменов; 3) обход РКН (дефолт) - в proxy только заблокированное/замедленное в РФ + исключения

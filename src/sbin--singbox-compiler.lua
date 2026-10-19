@@ -172,6 +172,11 @@ local function build_outbound(s, tag)
         -- "packetaddr" (IPv4-only, but this project already runs
         -- dns.strategy=ipv4_only, so that's not a new restriction).
         o.packet_encoding = "xudp"
+        -- flow: sing-box accepts only "" or "xtls-rprx-vision". Xray panels
+        -- sometimes hand out "xtls-rprx-vision-udp443", which sing-box
+        -- rejects at startup ("unsupported flow") — map it to the base value.
+        local flow = (s.flow or ""):gsub("%-udp443$", "")
+        if flow == "xtls-rprx-vision" then o.flow = flow end
         if s.security == "reality" then
             o.tls = {
                 enabled     = true,
@@ -183,21 +188,27 @@ local function build_outbound(s, tag)
             o.tls = { enabled = true, server_name = s.sni }
         end
 
-        if s.transport and s.transport ~= "" and s.transport ~= "none" then
-            o.transport = { type = s.transport }
+        -- type=tcp / type=raw in a share link means plain TCP, i.e. NO
+        -- transport block. sing-box has no "tcp" transport and refuses to
+        -- start with transport.type="tcp".
+        local transport = s.transport
+        if transport == "tcp" or transport == "raw" then transport = "none" end
+
+        if transport and transport ~= "" and transport ~= "none" then
+            o.transport = { type = transport }
             if s.path and s.path ~= "" then o.transport.path = s.path end
-            if s.transport == "ws" then
+            if transport == "ws" then
                 local h = (s.thost and s.thost ~= "" and s.thost) or s.sni
                 if h and h ~= "" then o.transport.headers = { Host = h } end
-            elseif s.transport == "http" then
+            elseif transport == "http" then
                 local h = (s.thost and s.thost ~= "" and s.thost) or s.sni
                 if h and h ~= "" then o.transport.host = { h } end
-            elseif s.transport == "xhttp" then
+            elseif transport == "xhttp" then
                 local h = (s.thost and s.thost ~= "" and s.thost) or s.sni
                 if h and h ~= "" then o.transport.host = h end
                 if s.mode and s.mode ~= "" then o.transport.mode = s.mode end
                 o.transport.x_padding_bytes = "100-1000"
-            elseif s.transport == "grpc" then
+            elseif transport == "grpc" then
                 if s.path and s.path ~= "" then
                     o.transport.service_name = s.path
                     o.transport.path = nil
@@ -507,4 +518,23 @@ if not json.parse(json_output) then
     os.exit(1)
 end
 local f = io.open(TMP_CONFIG, "w")
-if f then f:write(json_output); f:close(); os.execute("mv " .. TMP_CONFIG .. " " .. RUN_CONFIG) end
+if f then
+    f:write(json_output); f:close()
+    -- Pre-flight: never replace a working config with one the core refuses to
+    -- load. procd restarts sing-box on any change of RUN_CONFIG, so a bad file
+    -- means a dead core while the nft/tproxy rules still point at it.
+    local rc = 0
+    local bin = io.open("/usr/bin/sing-box", "r")
+    if bin then
+        bin:close()
+        rc = os.execute("ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true ENABLE_DEPRECATED_OUTBOUND_DNS_RULE_ITEM=true " ..
+            "ENABLE_DEPRECATED_MISSING_DOMAIN_RESOLVER=true /usr/bin/sing-box check -c " .. TMP_CONFIG ..
+            " >/var/run/singbox_check.log 2>&1")
+    end
+    if rc ~= 0 and rc ~= true then
+        os.execute("logger -t singbox-compiler \"ERROR: sing-box rejected the generated config, keeping the previous one: $(head -n1 /var/run/singbox_check.log | sed 's/.\\[[0-9;]*m//g' | cut -c1-200)\"")
+        os.remove(TMP_CONFIG)
+        os.exit(1)
+    end
+    os.execute("mv " .. TMP_CONFIG .. " " .. RUN_CONFIG)
+end

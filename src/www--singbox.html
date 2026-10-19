@@ -238,6 +238,7 @@ function shareNode(sec) {
             if (n.sni)        params.set('sni', n.sni);
             if (n.transport)  params.set('type', n.transport);
             if (n.path)       params.set('path', n.path);
+            if (n.flow)       params.set('flow', n.flow);
             uri = `vless://${n.uuid}@${n.server}:${n.server_port}?${params.toString()}#${encodeURIComponent(n.tag || '')}`;
         } else if (n.type === 'amneziawg' || n.type === 'wireguard') {
             uri = `[Interface]\nPrivateKey = ${n.private_key || ''}\nAddress = ${n.local_address || ''}\n\n[Peer]\nPublicKey = ${n.peer_public_key || ''}\nEndpoint = ${n.server}:${n.server_port}\nAllowedIPs = 0.0.0.0/0, ::/0\n`;
@@ -272,6 +273,7 @@ function openEditModal(btnEl) {
         document.getElementById('edit-sni').value       = n.sni       || '';
         document.getElementById('edit-transport').value = n.transport || 'none';
         document.getElementById('edit-path').value      = n.path      || '';
+        document.getElementById('edit-flow').value      = n.flow      || '';
     } else {
         document.getElementById('edit-privkey').value   = n.private_key    || '';
         document.getElementById('edit-pubkey').value    = n.peer_public_key || '';
@@ -317,6 +319,7 @@ async function saveEditNode() {
         node.sni       = document.getElementById('edit-sni').value;
         node.transport = document.getElementById('edit-transport').value;
         node.path      = document.getElementById('edit-path').value;
+        node.flow      = document.getElementById('edit-flow').value;
     } else {
         node.private_key     = document.getElementById('edit-privkey').value;
         node.peer_public_key = document.getElementById('edit-pubkey').value;
@@ -930,10 +933,11 @@ async function importVlessUri() {
             sni: params.get("sni") || "",
             pbk: params.get("pbk") || "",
             sid: params.get("sid") || "",
-            transport: params.get("type") || "none",
+            transport: ["tcp", "raw"].includes(params.get("type")) ? "none" : (params.get("type") || "none"),
             path: params.get("path") ? decodeURIComponent(params.get("path")) : "",
             thost: params.get("host") ? decodeURIComponent(params.get("host")) : "",
-            mode: params.get("mode") || ""
+            mode: params.get("mode") || "",
+            flow: params.get("flow") || ""
         };
 
         if (!node.server || !node.uuid) throw new Error("Неверный формат ссылки (нет IP или UUID)");
@@ -977,6 +981,7 @@ async function importVlessUri() {
                 <select id="edit-transport"><option value="none">none</option><option value="ws">ws</option><option value="grpc">grpc</option><option value="xhttp">xhttp</option></select>
             </div>
             <div class="form-group"><label>Path</label><input type="text" id="edit-path"></div>
+            <div class="form-group"><label>Flow</label><input type="text" id="edit-flow" placeholder="xtls-rprx-vision"></div>
         </div>
                 <div id="edit-awg-fields">
             <div class="form-group"><label>Private Key</label><input type="text" id="edit-privkey"></div>
