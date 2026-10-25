@@ -1,6 +1,6 @@
 # singA
 
-TProxy VPN-клиент для роутеров архитектуры arm64 на OpenWrt. Поддержка xhttp и awg2 2.0, раздельное туннелирование, гигиена DNS, веб-интерфейс на порту `1104`.
+TProxy VPN-клиент для роутеров архитектуры arm64 на OpenWrt. Поддержка xhttp и amneziaWG, раздельное туннелирование, гигиена DNS, веб-интерфейс на порту `1104`.
 
 ```sh
 sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install.sh)"
@@ -11,7 +11,7 @@ sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install
 ## Возможности
 
 **Протоколы**
-- AmneziaWG2 - импорт файла `amnezia_config.vpn`, сгенерированного приложением AmneziaVPN, или конфига WARP .conf
+- AmneziaWG 2.0 - импорт файла `amnezia_config.vpn`, сгенерированного приложением AmneziaVPN, или конфига WARP .conf
 - vless + xhttp/tcp + reality - импорт по ссылке `vless://` (поддерживается основной ключ PaperVPN)
 - Hysteria2 - импорт по ссылке `hysteria2://` или `hy2://` (обфускация salamander)
 
