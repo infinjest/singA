@@ -55,7 +55,17 @@ rm -f /usr/sbin/singbox-integrity-test
 rm -f /usr/sbin/singbox-compiler-test
 rm -f /usr/libexec/rpcd/singbox
 rm -f /usr/share/rpcd/acl.d/singbox.json
+rm -f /usr/lib/singbox/validate.lua
 rm -rf /www/singbox
+
+# --purge only: also remove the directories the installer created
+if [ "$1" = "--purge" ]; then
+    echo "[*] Removing project directories (--purge)..."
+    rm -rf /usr/lib/singbox
+    rm -rf /tmp/singa-src /tmp/singa-src.tar.gz
+    # shared with other packages: rmdir removes a directory only when it is empty
+    rmdir /usr/libexec/rpcd 2>/dev/null || true
+fi
 
 # 5. Deep clean of cache directories and tmpfs state
 echo "[*] Clearing databases, subscriptions, and runtime state..."
@@ -72,6 +82,7 @@ rm -f /var/run/singbox_sub_*.json
 echo "[*] Removing cron jobs..."
 if [ -f "/etc/crontabs/root" ]; then
     sed -i '/update-rules.sh/d' /etc/crontabs/root
+    sed -i '/singbox-sub-updater/d' /etc/crontabs/root
 fi
 
 # 7. Restart affected system services

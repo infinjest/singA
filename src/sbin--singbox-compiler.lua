@@ -216,6 +216,29 @@ local function build_outbound(s, tag)
             end
         end
     end
+    if s.type == "hysteria2" then
+        -- sing-box rejects unknown fields: "multiplex" is not valid for hysteria2
+        o.multiplex = nil
+        o.password  = s.password
+        if s.obfs == "salamander" and s.obfs_password and s.obfs_password ~= "" then
+            o.obfs = { type = "salamander", password = s.obfs_password }
+        end
+        o.tls = {
+            enabled     = true,
+            server_name = (s.sni and s.sni ~= "") and s.sni or s.server,
+            insecure    = (s.insecure == "1"),
+            alpn        = { "h3" }
+        }
+        -- port hopping (mport=20000-50000 in the share link): sing-box wants "from:to"
+        if s.server_ports and s.server_ports ~= "" then
+            o.server_ports = {}
+            for r in s.server_ports:gmatch("[^,%s]+") do
+                -- sing-box wants "from:to"; a single port becomes "p:p"
+                table.insert(o.server_ports, r:find("-", 1, true) and (r:gsub("%-", ":")) or (r .. ":" .. r))
+            end
+            if #o.server_ports > 0 then o.server_port = nil else o.server_ports = nil end
+        end
+    end
     return o
 end
 local function build_endpoint(s, tag)
@@ -251,6 +274,8 @@ local function build_endpoint(s, tag)
             table.insert(e.address, addr)
         end
     end
+    -- WARP configs ship MTU=1280; sing-box's default (1408) can stall on them
+    if tonumber(s.mtu) then e.mtu = tonumber(s.mtu) end
     if s.type == "amneziawg" then
         local function pick(v)
             local n = tonumber(v)
@@ -341,7 +366,7 @@ if #proxy_tags > 1 then
     })
     table.insert(sb.outbounds, 2, {
         type = "urltest", tag = "proxy-auto", outbounds = proxy_tags,
-        url = "http://cp.cloudflare.com/generate_204", interval = "3m", tolerance = 50, interrupt_exist_connections = false
+        url = "http://cp.cloudflare.com/generate_204", interval = "1m", tolerance = 50, interrupt_exist_connections = false
     })
 else
     local sel_tags = {}
@@ -511,6 +536,23 @@ sb.dns.rules = {}
 for _, r in ipairs(dns_domain) do table.insert(sb.dns.rules, r) end
 for _, r in ipairs(dns_custom) do table.insert(sb.dns.rules, r) end
 for _, r in ipairs(dns_geo)    do table.insert(sb.dns.rules, r) end
+
+-- hosts-like static records (all route modes): exact domain -> fixed IP(s), answered locally
+do
+    local hosts_map, hosts_domains = {}, {}
+    uci:foreach("singbox", "hosts_entry", function(h)
+        if not (h.domain and h.domain ~= "" and h.ip and h.ip ~= "") then return end
+        if not hosts_map[h.domain] then
+            hosts_map[h.domain] = {}
+            table.insert(hosts_domains, h.domain)
+        end
+        table.insert(hosts_map[h.domain], h.ip)
+    end)
+    if #hosts_domains > 0 then
+        table.insert(sb.dns.servers, { type = "hosts", tag = "dns-hosts", predefined = hosts_map })
+        table.insert(sb.dns.rules, 1, { domain = hosts_domains, server = "dns-hosts" })
+    end
+end
 
 local json_output = json.stringify(sb)
 if not json.parse(json_output) then

@@ -48,6 +48,16 @@
         .suggest-box { position: absolute; left: 0; right: 0; top: 100%; margin-top: 2px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; max-height: 180px; overflow-y: auto; z-index: 50; box-shadow: 0 4px 12px rgba(0,0,0,.3); }
         .suggest-item { padding: 7px 12px; font-size: .85rem; cursor: pointer; }
         .suggest-item:hover, .suggest-item.active { background: var(--accent); color: #fff; }
+		@media (max-width: 600px) {
+			body { padding: 10px; }
+			.card { padding: 14px; }
+			header { flex-wrap: wrap; gap: 8px; }
+			.tabs { overflow-x: auto; gap: 6px; }
+			.tab-btn { padding: 8px 12px; white-space: nowrap; flex: none; }
+			table { display: block; overflow-x: auto; white-space: nowrap; }
+			.modal { padding: 16px; }
+			.modal [style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+		}
     </style>
 </head>
 <body>
@@ -121,10 +131,10 @@
                     <div class="form-group" style="flex:1;min-width:220px">
                         <label>Local DNS (напрямую)</label>
                         <select id="cfg-local-dns-select" onchange="onDnsSelectChange('local')">
-                            <option value="tcp://1.1.1.1">Cloudflare 1.1.1.1 (дефолт)</option>
-                            <option value="tcp://77.88.8.8">Яндекс 77.88.8.8</option>
-                            <option value="tcp://94.140.14.14">AdGuard 94.140.14.14</option>
-                            <option value="tcp://8.8.8.8">Google 8.8.8.8</option>
+                            <option value="tcp://1.1.1.1">Cloudflare tcp://1.1.1.1 (дефолт)</option>
+                            <option value="tcp://77.88.8.8">Яндекс tcp://77.88.8.8</option>
+                            <option value="tcp://94.140.14.14">AdGuard tcp://94.140.14.14</option>
+                            <option value="tcp://8.8.8.8">Google tcp://8.8.8.8</option>
                             <option value="__custom__">Задать свой...</option>
                         </select>
                         <input type="text" id="cfg-local-dns" placeholder="tcp://... (или tls://host[:порт] для DoT)" style="margin-top:6px;display:none" oninput="markDirty()">
@@ -144,7 +154,7 @@
                 <div style="background:var(--bg);padding:15px;border-radius:6px;margin-bottom:15px;border:1px solid var(--border)">
                     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
                         <div style="flex:1;min-width:140px"><label>IP источника (LAN):</label><input type="text" id="rule-source" placeholder="Пусто = для всех"></div>
-                        <div style="flex:2;min-width:180px;position:relative"><label>Домены (можно через запятую, можно geosite:name):</label><input type="text" id="rule-domain" placeholder="user.papervpn.lol, geosite:google-gemini" autocomplete="off" oninput="suggestCategory(this)" onblur="setTimeout(()=>hideSuggest('rule-domain'),150)"><div id="rule-domain-suggest" class="suggest-box" hidden></div></div>
+                        <div style="flex:2;min-width:180px;position:relative"><label>Домены (можно через запятую, можно geosite:name):</label><input type="text" id="rule-domain" placeholder="user.papervpn.lol, geosite:github, last.fm" autocomplete="off" oninput="suggestCategory(this)" onblur="setTimeout(()=>hideSuggest('rule-domain'),150)"><div id="rule-domain-suggest" class="suggest-box" hidden></div></div>
                         <div style="flex:1;min-width:140px"><label>IP назначения:</label><input type="text" id="rule-ip" placeholder="Пусто, если заданы домены"></div>
                         <div style="flex:1;min-width:120px">
                             <label>Действие:</label>
@@ -161,12 +171,24 @@
                 <div style="background:var(--bg);padding:15px;border-radius:6px;margin-bottom:15px;border:1px solid var(--border)">
                     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
                         <div style="flex:2;min-width:200px"><label>Домены (через запятую):</label><input type="text" id="dns-rule-domain" placeholder="gemini.google.com"></div>
-                        <div style="flex:2;min-width:220px"><label>DNS сервер (DoT/DoH):</label><input type="text" id="dns-rule-server" placeholder="tls://xbox-dns.ru"></div>
+                        <div style="flex:2;min-width:220px"><label>DNS сервер (DoT/DoH):</label><input type="text" id="dns-rule-server" placeholder="https://dns.magicdns.ru/dns-query"></div>
                         <div style="min-width:160px"><label style="display:flex;align-items:center;gap:5px;height:38px"><input type="checkbox" id="dns-rule-via-proxy"> Запрос через прокси</label></div>
                         <button class="btn" onclick="addDnsRule()" style="height:38px;padding:0 15px">Добавить</button>
                     </div>
                 </div>
                 <table id="dns-rules-table"><thead><tr><th>Домены</th><th>DNS сервер</th><th>Через прокси</th><th></th></tr></thead><tbody></tbody></table>
+            </div>
+
+            <div id="card-hosts" class="card">
+                <h3>Hosts (свои DNS-записи)</h3>
+                <div style="background:var(--bg);padding:15px;border-radius:6px;margin-bottom:15px;border:1px solid var(--border)">
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+                        <div style="flex:2;min-width:200px"><label>Домен:</label><input type="text" id="host-domain" placeholder="ntc.party"></div>
+                        <div style="flex:1;min-width:160px"><label>IP:</label><input type="text" id="host-ip" placeholder="130.255.77.28"></div>
+                        <button class="btn" onclick="addHost()" style="height:38px;padding:0 15px">Добавить</button>
+                    </div>
+                </div>
+                <table id="hosts-table"><thead><tr><th>Домен</th><th>IP</th><th></th></tr></thead><tbody></tbody></table>
             </div>
         </div>
     </div>
@@ -175,9 +197,14 @@
         <div class="card">
             <h3 style="display:flex;justify-content:space-between;align-items:center">
                 <span>Подписки</span>
-                <div style="display:flex;gap:8px">
-                    <input type="file" id="vpn-upload" style="display:none" accept=".vpn,.conf,.json" onchange="importVpnFile(event)">
-                    <button class="btn btn-success" onclick="document.getElementById('vpn-upload').click()">Импорт .vpn / .conf</button>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <label style="margin:0">Автообновление</label>
+                    <select id="cfg-sub-cron" onchange="setSubCron()" style="width:auto">
+                        <option value="disable">Не обновлять</option>
+                        <option value="0 */6 * * *">Каждые 6 часов</option>
+                        <option value="0 */12 * * *">Каждые 12 часов</option>
+                        <option value="30 4 * * *">Раз в день</option>
+                    </select>
                     <button class="btn" onclick="addSubscription()">+ Подписка</button>
                 </div>
             </h3>
@@ -189,11 +216,10 @@
                 <button class="btn btn-sm" style="background:var(--border)" onclick="toggleAllNodes()">Включить/выключить все узлы</button>
             </h3>
             <table id="nodes-table"><thead><tr><th>Тег</th><th>Протокол</th><th>Сервер</th><th>Порт</th><th></th></tr></thead><tbody></tbody></table>
-                        <div style="display:flex;gap:8px">
+                        <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
                                 <input type="file" id="vpn-upload-node" style="display:none" accept=".vpn,.conf,.json" onchange="importVpnFile(event)">
-                                <button class="btn btn-success" onclick="document.getElementById('vpn-upload-node').click()">Импорт Файла</button>
-                                <button class="btn btn-success" onclick="importVlessUri()">+ VLESS URI</button>
-                                <button class="btn" onclick="addSubscription()">+ Подписка</button>
+                                <button class="btn btn-success" onclick="document.getElementById('vpn-upload-node').click()">Импорт файла Amnezia/WARP (.vpn/.conf)</button>
+                                <button class="btn btn-success" onclick="importVlessUri()">+ VLESS/HY2 URI</button>
                         </div>
         </div>
     </div>
@@ -241,7 +267,23 @@ function shareNode(sec) {
             if (n.flow)       params.set('flow', n.flow);
             uri = `vless://${n.uuid}@${n.server}:${n.server_port}?${params.toString()}#${encodeURIComponent(n.tag || '')}`;
         } else if (n.type === 'amneziawg' || n.type === 'wireguard') {
-            uri = `[Interface]\nPrivateKey = ${n.private_key || ''}\nAddress = ${n.local_address || ''}\n\n[Peer]\nPublicKey = ${n.peer_public_key || ''}\nEndpoint = ${n.server}:${n.server_port}\nAllowedIPs = 0.0.0.0/0, ::/0\n`;
+            let iface = `[Interface]\nPrivateKey = ${n.private_key || ''}\nAddress = ${n.local_address || ''}\n`;
+            if (n.mtu) iface += `MTU = ${n.mtu}\n`;
+            if (n.type === 'amneziawg') {
+                [['Jc','jc'],['Jmin','jmin'],['Jmax','jmax'],['S1','s1'],['S2','s2'],['S3','s3'],['S4','s4'],
+                 ['H1','h1'],['H2','h2'],['H3','h3'],['H4','h4'],['I1','i1'],['I2','i2'],['I3','i3'],['I4','i4'],['I5','i5']]
+                    .forEach(([k, f]) => { if (n[f] && n[f] !== '0') iface += `${k} = ${n[f]}\n`; });
+            }
+            uri = `${iface}\n[Peer]\nPublicKey = ${n.peer_public_key || ''}\n` +
+                  (n.pre_shared_key ? `PresharedKey = ${n.pre_shared_key}\n` : '') +
+                  `Endpoint = ${n.server.includes(':') ? '[' + n.server + ']' : n.server}:${n.server_port}\nAllowedIPs = 0.0.0.0/0, ::/0\n`;
+        } else if (n.type === 'hysteria2') {
+            const params = new URLSearchParams();
+            if (n.sni)                         params.set('sni', n.sni);
+            if (n.insecure === '1')            params.set('insecure', '1');
+            if (n.obfs === 'salamander')     { params.set('obfs', 'salamander'); params.set('obfs-password', n.obfs_password || ''); }
+            if (n.server_ports)                params.set('mport', n.server_ports);
+            uri = `hysteria2://${encodeURIComponent(n.password || '')}@${n.server}:${n.server_port}/?${params.toString()}#${encodeURIComponent(n.tag || '')}`;
         } else {
             alert('Экспорт для этого типа узла не поддерживается');
             return;
@@ -249,7 +291,7 @@ function shareNode(sec) {
         const blob = new Blob([uri], { type: 'text/plain' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = (n.tag || 'node') + (n.type === 'vless' ? '.txt' : '.conf');
+        a.download = (n.tag || 'node') + (n.type === 'vless' || n.type === 'hysteria2' ? '.txt' : '.conf');
         a.click();
     });
 }
@@ -264,10 +306,19 @@ function openEditModal(btnEl) {
     document.getElementById('edit-port').value    = n.server_port || '';
 
     const isAwg = n.type === 'amneziawg' || n.type === 'wireguard';
-    document.getElementById('edit-vless-fields').style.display = isAwg ? 'none' : '';
+    const isHy2 = n.type === 'hysteria2';
+    document.getElementById('edit-vless-fields').style.display = (isAwg || isHy2) ? 'none' : '';
     document.getElementById('edit-awg-fields').style.display   = isAwg ? '' : 'none';
+    document.getElementById('edit-hy2-fields').style.display   = isHy2 ? '' : 'none';
 
-    if (!isAwg) {
+    if (isHy2) {
+        document.getElementById('edit-hy2-password').value = n.password      || '';
+        document.getElementById('edit-hy2-sni').value      = n.sni           || '';
+        document.getElementById('edit-hy2-obfs').value     = n.obfs          || '';
+        document.getElementById('edit-hy2-obfspw').value   = n.obfs_password || '';
+        document.getElementById('edit-hy2-insecure').checked = n.insecure === '1';
+        document.getElementById('edit-hy2-ports').value    = n.server_ports  || '';
+    } else if (!isAwg) {
         document.getElementById('edit-uuid').value      = n.uuid      || '';
         document.getElementById('edit-security').value  = n.security  || 'none';
         document.getElementById('edit-sni').value       = n.sni       || '';
@@ -278,6 +329,7 @@ function openEditModal(btnEl) {
         document.getElementById('edit-privkey').value   = n.private_key    || '';
         document.getElementById('edit-pubkey').value    = n.peer_public_key || '';
         document.getElementById('edit-localaddr').value = n.local_address   || '';
+        document.getElementById('edit-mtu').value       = n.mtu             || '';
         const isAmnezia = n.type === 'amneziawg';
         document.getElementById('edit-amnezia-params').style.display = isAmnezia ? '' : 'none';
         if (isAmnezia) {
@@ -286,10 +338,11 @@ function openEditModal(btnEl) {
             document.getElementById('edit-jmax').value = n.jmax || '0';
             document.getElementById('edit-s1').value   = n.s1   || '0';
             document.getElementById('edit-s2').value   = n.s2   || '0';
-            document.getElementById('edit-h1').value   = n.h1   || '0';
-            document.getElementById('edit-h2').value   = n.h2   || '0';
-            document.getElementById('edit-h3').value   = n.h3   || '0';
-            document.getElementById('edit-h4').value   = n.h4   || '0';
+            document.getElementById('edit-h1').value   = n.h1   || '';
+            document.getElementById('edit-h2').value   = n.h2   || '';
+            document.getElementById('edit-h3').value   = n.h3   || '';
+            document.getElementById('edit-h4').value   = n.h4   || '';
+            for (let i = 1; i <= 5; i++) document.getElementById('edit-i' + i).value = n['i' + i] || '';
             document.getElementById('edit-s3').value  = n.s3  || '0';
             document.getElementById('edit-s4').value  = n.s4  || '0';
             document.getElementById('edit-psk').value = n.pre_shared_key || '';
@@ -306,6 +359,7 @@ async function saveEditNode() {
     const sec  = document.getElementById('edit-section').value;
     const type = document.getElementById('edit-type').value;
     const isAwg = type === 'amneziawg' || type === 'wireguard';
+    const isHy2 = type === 'hysteria2';
 
     const node = {
         tag: document.getElementById('edit-tag').value,
@@ -313,7 +367,14 @@ async function saveEditNode() {
         server_port: document.getElementById('edit-port').value,
     };
 
-    if (!isAwg) {
+    if (isHy2) {
+        node.password      = document.getElementById('edit-hy2-password').value;
+        node.sni           = document.getElementById('edit-hy2-sni').value;
+        node.obfs          = document.getElementById('edit-hy2-obfs').value;
+        node.obfs_password = document.getElementById('edit-hy2-obfspw').value;
+        node.insecure      = document.getElementById('edit-hy2-insecure').checked ? '1' : '';
+        node.server_ports  = document.getElementById('edit-hy2-ports').value;
+    } else if (!isAwg) {
         node.uuid      = document.getElementById('edit-uuid').value;
         node.security  = document.getElementById('edit-security').value;
         node.sni       = document.getElementById('edit-sni').value;
@@ -324,6 +385,7 @@ async function saveEditNode() {
         node.private_key     = document.getElementById('edit-privkey').value;
         node.peer_public_key = document.getElementById('edit-pubkey').value;
         node.local_address   = document.getElementById('edit-localaddr').value;
+        node.mtu             = document.getElementById('edit-mtu').value;
 
         // Only collect obfuscation params for AmneziaWG
         if (type === 'amneziawg') {
@@ -335,10 +397,12 @@ async function saveEditNode() {
             node.s3  = document.getElementById('edit-s3').value || "0";
             node.s4  = document.getElementById('edit-s4').value || "0";
             node.pre_shared_key = document.getElementById('edit-psk').value || "";
-            node.h1   = document.getElementById('edit-h1').value || "0";
-            node.h2   = document.getElementById('edit-h2').value || "0";
-            node.h3   = document.getElementById('edit-h3').value || "0";
-            node.h4   = document.getElementById('edit-h4').value || "0";
+            // empty h*/i* = "not set": edit_node deletes the key (AWG 1.5 / WARP has no H1-H4)
+            node.h1   = document.getElementById('edit-h1').value;
+            node.h2   = document.getElementById('edit-h2').value;
+            node.h3   = document.getElementById('edit-h3').value;
+            node.h4   = document.getElementById('edit-h4').value;
+            for (let i = 1; i <= 5; i++) node['i' + i] = document.getElementById('edit-i' + i).value;
         }
     }
 
@@ -438,6 +502,7 @@ function prettyNodeTag(tag) {
 
 function protoLabel(n) {
     if (n.type === 'amneziawg') return 'amneziaWG2';
+    if (n.type === 'hysteria2') return n.obfs === 'salamander' ? 'hysteria2-salamander' : 'hysteria2';
     if (n.type === 'vless') {
         const parts = ['vless'];
         if (n.transport && n.transport !== 'none') parts.push(n.transport);
@@ -612,6 +677,11 @@ async function loadData() {
     loadedRouteMode = routeMode;
     document.getElementById('cfg-route-mode').value  = routeMode;
     document.getElementById('cfg-cron').value       = cfg.main?.cron_schedule || "0 4 * * 1";
+    {   // schedule hand-edited in crontab and absent from the list still shows up
+        const sel = document.getElementById('cfg-sub-cron'), v = cfg.sub_cron || 'disable';
+        if (![...sel.options].some(o => o.value === v)) sel.add(new Option(v, v));
+        sel.value = v;
+    }
 
     setDnsSelectValue('dns',   cfg.main?.custom_dns || "https://dns.cloudflare.com/dns-query");
     setDnsSelectValue('local', cfg.main?.local_dns  || "tcp://1.1.1.1");
@@ -628,6 +698,13 @@ async function loadData() {
             <td><button class="btn btn-danger" style="padding:4px 10px" onclick="deleteItem('${esc(sec)}', true)">×</button></td>`;
     });
     document.querySelector('#rules-table tbody').innerHTML = rHtml || '<tr><td colspan="5" style="color:#64748b; text-align:center;">Нет исключений. Работают системные правила.</td></tr>';
+
+    let hostsHtml = '';
+    Object.entries(cfg.hosts || {}).forEach(([sec, h]) => {
+        hostsHtml += `<tr><td style="word-break:break-all">${esc(h.domain)}</td><td>${esc(h.ip)}</td>
+            <td><button class="btn btn-danger" style="padding:4px 10px" onclick="deleteHost('${esc(sec)}')">×</button></td></tr>`;
+    });
+    document.querySelector('#hosts-table tbody').innerHTML = hostsHtml || '<tr><td colspan="3" style="color:#64748b; text-align:center;">Нет записей</td></tr>';
 
     let dnsRuleHtml = '';
     Object.entries(cfg.dns_rules || {}).forEach(([sec, r]) => {
@@ -774,6 +851,12 @@ async function saveSettings() {
     } finally { btn.disabled = false; btn.textContent = 'Применить конфигурацию'; }
 }
 
+async function setSubCron() {
+    const res = await ubusCall("singbox", "set_sub_cron", { schedule: document.getElementById('cfg-sub-cron').value });
+    if (res.error) { alert('Ошибка: ' + res.error); loadData(); return; }
+    showToast('Расписание обновления подписок сохранено');
+}
+
 async function addSubscription() {
     const label = prompt('Имя подписки:'); if (!label) return;
     const url = prompt('URL подписки:'); if (!url) return;
@@ -788,6 +871,27 @@ async function syncSub(sec) {
         const s = await ubusCall("singbox", "status");
         if (!s.sub_updating || ++attempts > 30) { clearInterval(poll); loadData(); }
     }, 2000);
+}
+
+async function addHost() {
+    const domain = document.getElementById('host-domain').value.trim(), ip = document.getElementById('host-ip').value.trim();
+    if (!domain || !ip) { alert('Укажите домен и IP.'); return; }
+    const res = await ubusCall("singbox", "add_host", { host: { domain, ip } });
+    if (res.error) { alert('Ошибка: ' + res.error); return; }
+    document.getElementById('host-domain').value = '';
+    document.getElementById('host-ip').value = '';
+    await ubusCall("singbox", "apply");
+    loadData();
+    showToast('Запись добавлена и применена');
+}
+
+async function deleteHost(sec) {
+    if (!confirm('Удалить запись?')) return;
+    const res = await ubusCall("singbox", "del_host", { section: sec });
+    if (res.error) { alert('Ошибка удаления: ' + res.error); return; }
+    await ubusCall("singbox", "apply");
+    loadData();
+    showToast('Запись удалена');
 }
 
 async function deleteItem(sec, isRule = false) {
@@ -877,13 +981,17 @@ async function importVpnFile(e) {
                 const lines = text.split('\n');
                 let conf = {};
                 lines.forEach(l => {
+                    l = l.trim();
                     const match = l.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.+)$/);
                     if (match) conf[match[1].toLowerCase()] = match[2].trim();
                 });
 
-                const endpoint = conf.endpoint ? conf.endpoint.split(':') : [];
+                // host:port, [v6]:port or host (WARP: engage.cloudflareclient.com:2408)
+                const em = (conf.endpoint || '').match(/^\[?([^\]]+?)\]?(?::(\d+))?$/);
+                const endpoint = em ? [em[1], em[2]] : [];
+                const isWarp = /cloudflare/i.test(endpoint[0] || '');
                 node = {
-                    type: 'amneziawg', tag: 'AWG_Conf_' + (endpoint[1] || '443'),
+                    type: 'amneziawg', tag: (isWarp ? 'WARP_' : 'AWG_Conf_') + (endpoint[1] || '443'),
                     server: endpoint[0] || prompt('IP сервера не найден. Введите:', ''),
                     server_port: endpoint[1] || '443', private_key: conf.privatekey, peer_public_key: conf.publickey,
                     local_address: conf.address || '10.8.0.2/32',
@@ -891,10 +999,11 @@ async function importVpnFile(e) {
                     jmin: String(conf.jmin || 0), jmax: String(conf.jmax || 0),
                     s1: String(conf.s1 || 0), s2: String(conf.s2 || 0),
                     s3: String(conf.s3 || 0), s4: String(conf.s4 || 0),
-                    h1: String(conf.h1 || 0),
-                    pre_shared_key: conf.presharedkey || '',
-                    h2: String(conf.h2 || 0), h3: String(conf.h3 || 0), h4: String(conf.h4 || 0)
+                    h1: conf.h1 || '', h2: conf.h2 || '', h3: conf.h3 || '', h4: conf.h4 || '',
+                    pre_shared_key: conf.presharedkey || ''
                 };
+                if (conf.mtu) node.mtu = conf.mtu;
+                for (let i = 1; i <= 5; i++) if (conf['i' + i]) node['i' + i] = conf['i' + i];
             } else {
                 throw new Error("Неподдерживаемый формат файла. Ожидается .vpn (JSON) или .conf (INI)");
             }
@@ -913,11 +1022,53 @@ async function importVpnFile(e) {
     }
 }
 
+// ── Hysteria2 URI parser: hysteria2://[auth@]host[:port][,mport]/?obfs=salamander&obfs-password=..&sni=..&insecure=1#name ──
+async function importHy2Uri(uri) {
+    const m = uri.match(/^(?:hysteria2|hy2):\/\/(?:([^@\/?#]*)@)?(\[[^\]]+\]|[^:\/?#,]+)(?::([\d,\-]+))?\/?(?:\?([^#]*))?(?:#(.*))?$/i);
+    if (!m) { alert("Неверный формат ссылки hysteria2://"); return; }
+    try {
+        const dec = v => { try { return decodeURIComponent(v); } catch { return v; } };
+        const params = new URLSearchParams(m[4] || '');
+        const host = m[2].replace(/^\[|\]$/g, '');
+        // port: "443", multi-port "443,5000-6000" (spec) and/or ?mport=20000-50000
+        const specPorts = (m[3] || '').split(',').filter(Boolean);
+        const ranges = specPorts.concat((params.get('mport') || '').split(',').filter(Boolean));
+        const hopping = ranges.some(r => r.includes('-')) || ranges.length > 1;
+        const obfs = params.get('obfs') || '';
+        if (obfs && obfs !== 'salamander') throw new Error('Обфускация "' + obfs + '" не поддерживается (только salamander)');
+
+        const node = {
+            type: 'hysteria2',
+            tag: dec(m[5] || '') || `Hy2_${host}`,
+            server: host,
+            server_port: (specPorts.find(r => /^\d+$/.test(r)) || ranges[0] || '443').split('-')[0],
+            password: dec(m[1] || ''),
+            sni: params.get('sni') || params.get('peer') || '',
+            insecure: (params.get('insecure') === '1' || params.get('allowInsecure') === '1') ? '1' : ''
+        };
+        if (hopping) node.server_ports = ranges.join(',');
+        if (obfs === 'salamander') {
+            node.obfs = 'salamander';
+            node.obfs_password = params.get('obfs-password') || '';
+            if (!node.obfs_password) throw new Error('Не указан obfs-password для salamander');
+        }
+        if (!node.password) throw new Error('В ссылке нет пароля (auth)');
+
+        const res = await ubusCall("singbox", "add_node", { node });
+        if (res.error) throw new Error(res.error);
+        alert("Hysteria2 узел успешно добавлен!");
+        loadData();
+    } catch (e) {
+        alert("Ошибка парсинга ссылки: " + e.message);
+    }
+}
+
 // ── VLESS URI parser ──
 async function importVlessUri() {
-    const uri = prompt("Вставьте VLESS ссылку (vless://...):");
+    const uri = (prompt("Вставьте ссылку vless:// или hysteria2:// (hy2://):") || '').trim();
     if (!uri) return;
-    if (!uri.startsWith("vless://")) { alert("Поддерживаются только ссылки vless://"); return; }
+    if (/^(hysteria2|hy2):\/\//i.test(uri)) return importHy2Uri(uri);
+    if (!uri.startsWith("vless://")) { alert("Поддерживаются ссылки vless://, hysteria2:// и hy2://"); return; }
 
     try {
         const url = new URL(uri);
@@ -1000,7 +1151,23 @@ async function importVlessUri() {
                 <div class="form-group"><label>h3</label><input type="text" id="edit-h3"></div>
                 <div class="form-group"><label>h4</label><input type="text" id="edit-h4"></div>
                 <div class="form-group" style="grid-column:1/-1"><label>Pre-Shared Key</label><input type="text" id="edit-psk"></div>
+                <div class="form-group" style="grid-column:1/-1"><label>i1 (CPS-пакет, напр. &lt;b 0x…&gt;&lt;r 16&gt;)</label><input type="text" id="edit-i1"></div>
+                <div class="form-group" style="grid-column:1/-1"><label>i2</label><input type="text" id="edit-i2"></div>
+                <div class="form-group" style="grid-column:1/-1"><label>i3</label><input type="text" id="edit-i3"></div>
+                <div class="form-group" style="grid-column:1/-1"><label>i4</label><input type="text" id="edit-i4"></div>
+                <div class="form-group" style="grid-column:1/-1"><label>i5</label><input type="text" id="edit-i5"></div>
             </div>
+            <div class="form-group"><label>MTU (WARP: 1280)</label><input type="text" id="edit-mtu"></div>
+        </div>
+        <div id="edit-hy2-fields" style="display:none">
+            <div class="form-group"><label>Пароль (auth)</label><input type="text" id="edit-hy2-password"></div>
+            <div class="form-group"><label>SNI</label><input type="text" id="edit-hy2-sni"></div>
+            <div class="form-group"><label>Обфускация</label>
+                <select id="edit-hy2-obfs"><option value="">нет</option><option value="salamander">salamander</option></select>
+            </div>
+            <div class="form-group"><label>Пароль obfs</label><input type="text" id="edit-hy2-obfspw"></div>
+            <div class="form-group"><label>Port hopping (напр. 20000-50000)</label><input type="text" id="edit-hy2-ports"></div>
+            <div class="form-group"><label><input type="checkbox" id="edit-hy2-insecure"> Не проверять сертификат (insecure)</label></div>
         </div>
         <div class="modal-footer">
             <button class="btn" style="background:var(--border)" onclick="closeEditModal()">Отмена</button>

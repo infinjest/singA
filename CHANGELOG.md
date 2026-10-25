@@ -4,6 +4,32 @@
 
 ---
 
+## [0.10.7] — 2026-10-25
+
+### Added
+
+- **Hysteria2.** `www--singbox.html`: импорт по ссылке `hysteria2://` / `hy2://` через ту же кнопку, что и VLESS (`+ VLESS/HY2 URI`; схему определяет парсер). Поддержаны обфускация `salamander`, `insecure`, SNI, port hopping (`mport` или список портов в ссылке). Поля в окне редактирования узла, экспорт ссылки в `shareNode`. `compiler`: outbound `hysteria2` без блока `multiplex` (ядро отвергает неизвестные поля), `server_ports` в формате `from:to`. `rpcd`: поля `password`, `obfs`, `obfs_password`, `insecure`, `server_ports` в whitelist `add_node`/`edit_node`.
+- **WARP / AmneziaWG `.conf`.** Импорт параметров `I1`–`I5` и `MTU` (WARP-конфиги с Jc/Jmin/Jmax/I1); поля `i1`–`i5` и MTU в окне редактирования узла. `compiler` передаёт `mtu` в wireguard/amneziawg-endpoint. Для эндпоинта `engage.cloudflareclient.com` тег узла начинается с `WARP_`.
+- **Hosts — собственные DNS-записи.** `www--singbox.html`: карточка «Hosts (свои DNS-записи)» с таблицей и полями «домен» / «IP», доступна во всех режимах маршрутизации. `rpcd`: `add_host` / `del_host` (проверка домена и IP через `validate`), `get_config` отдаёт `hosts`. `compiler`: DNS-сервер `type = "hosts"` и правило `domain → dns-hosts` первым в `dns.rules`. `install.sh`: методы добавлены в ACL.
+- **Автообновление подписок по расписанию.** `www--singbox.html`: выпадающий список «Автообновление» в блоке «Подписки» (от 30 минут до суток), сохраняется сразу при выборе. `rpcd`: `set_sub_cron` пишет строку в `/etc/crontabs/root` (`singbox-sub-updater`, затем `reload` только если служба включена); расписание хранится в crontab, а не в UCI, поэтому не вызывает `uci commit` и перезапуск. `get_config` возвращает текущее значение (`sub_cron`), нестандартное значение из crontab показывается отдельным пунктом.
+
+### Changed
+
+- `compiler`: `urltest` — `interval` 3 мин → 1 мин, смена узла после потери связи происходит быстрее.
+- `www--singbox.html`: кнопки в блоке «Узлы» переименованы: «Импорт файла Amnezia/WARP (.vpn/.conf)» и «+ VLESS/HY2 URI» (одна кнопка вместо двух). Кнопка импорта `.vpn`/`.conf` убрана из блока «Подписки»; дублирующая «+ Подписка» убрана из блока «Узлы».
+- `www--singbox.html`: обновлены placeholder'ы полей ввода.
+- `uninstall.sh`: `singbox-uninstall --purge` теперь удаляет и каталоги проекта (`/usr/lib/singbox`, временные файлы `/tmp/singa-src*`, пустой `/usr/libexec/rpcd`; `rmdir` не трогает каталог с чужими файлами). Без `--purge` каталоги остаются, как и `/etc/config/singbox`. Файл `validate.lua` и cron-строка `singbox-sub-updater` удаляются всегда.
+
+### Fixed
+
+- **`install.sh`: установка падала на чистой системе без каталога `/usr/libexec/rpcd`** (`cp: can't create '/usr/libexec/rpcd/singbox'`, шаг 4). Каталог, заданный в `RPCD_DIR`, нигде не создавался, а `mkdir -p` на шаге создания каталогов его не включал. Теперь `${RPCD_DIR}` создаётся вместе с остальными (#1).
+- **`rpcd`: правила `geosite:<категория>` не добавлялись — «категория не найдена или недоступна» для любой категории.** `.srs`-файл скачивался `wget`, трафик которого шёл через tproxy и упирался в таймаут. Теперь `curl` по схеме `update-rules.sh`: сначала напрямую (`--local-port 57321-57325`, в обход tproxy), при неудаче через узел (`57330-57334`). Текст ошибки уточнён: «Не удалось скачать geosite:… (категории нет или GitHub недоступен)» вместо ложного утверждения, что категории нет.
+- `www--singbox.html`: на мобильных экранах верстка панели съезжала. Добавлен `@media (max-width: 600px)`: таблицы и вкладки прокручиваются по горизонтали, двухколоночные формы в модальных окнах складываются в одну колонку.
+- `www--singbox.html`: импорт `.conf` с CRLF-переводами строк (ни одна строка не распознавалась), с IPv6-endpoint и подстановка `H1`–`H4 = 0` для конфигов без этих параметров (AWG 1.5 / WARP) — неуказанные параметры теперь не передаются.
+- `www--singbox.html`: экспорт `.conf` в `shareNode` терял `Jc`/`Jmin`/`Jmax`/`S*`/`H*`/`I*`, `MTU` и `PresharedKey`.
+
+---
+
 ## [0.10.6] — 2026-10-20
 
 ### Fixed

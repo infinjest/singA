@@ -13,7 +13,7 @@ GITHUB_USER="infinjest"
 REPO_NAME="singA"
 BRANCH="main"
 RAW_BASE="https://raw.githubusercontent.com/${GITHUB_USER}/${REPO_NAME}/${BRANCH}"
-SINGA_VERSION="0.10.6"
+SINGA_VERSION="0.10.7"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 log() { echo "[singA] $*"; }
@@ -144,7 +144,7 @@ fi
 
 # ── 3. Create directory tree ──────────────────────────────────────────────────
 log "[3/8] Creating directories..."
-run "mkdir -p ${SING_BOX_DIR} ${WWW_DIR} /usr/lib/singbox"
+run "mkdir -p ${SING_BOX_DIR} ${WWW_DIR} /usr/lib/singbox ${RPCD_DIR}"
 
 if [ "$DRY_RUN" != "1" ]; then
     rm -rf "${SING_BOX_DIR}/sub_cache"
@@ -293,7 +293,7 @@ cat > "${ACL_DIR}/singbox.json" << 'EOF'
       "ubus": { "singbox": [
         "add_node", "edit_node", "del_node", "set_settings",
         "add_rule", "del_rule",
-        "add_dns_rule", "del_dns_rule",
+        "add_dns_rule", "del_dns_rule", "add_host", "del_host", "set_sub_cron",
         "add_subscription", "update_sub",
         "apply", "check_connectivity", "get_running_config", "get_log"
       ]},
@@ -440,6 +440,6 @@ echo "  Useful commands:"
 echo "  Integration tests (only right after a clean install):  sh /usr/sbin/singbox-integrity-test"
 echo "  Check compiled JSON for every route_mode: sh /usr/sbin/singbox-compiler-test"
 echo "  Update rule databases manually: sh /etc/sing-box/update-rules.sh"
-echo "  Uninstall (--purge to also remove the UCI config):   sh /usr/sbin/singbox-uninstall"
+echo "  Uninstall (--purge to also remove the UCI config and project directories):   sh /usr/sbin/singbox-uninstall"
 fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

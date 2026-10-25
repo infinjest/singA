@@ -10,7 +10,7 @@ local method = arg[1]
 local action = arg[2]
 
 if method == "list" then
-    print('{"status":{},"get_config":{},"add_node":{"node":"table"},"del_node":{"section":"string"},"edit_node":{"section":"string","node":"table"},"set_settings":{"settings":"table"},"add_rule":{"rule":"table"},"del_rule":{"section":"string"},"add_dns_rule":{"rule":"table"},"del_dns_rule":{"section":"string"},"add_subscription":{"label":"string","url":"string"},"update_sub":{"section":"string"},"apply":{},"check_connectivity":{},"get_running_config":{},"get_log":{},"get_active_node":{}}')
+    print('{"status":{},"get_config":{},"add_node":{"node":"table"},"del_node":{"section":"string"},"edit_node":{"section":"string","node":"table"},"set_settings":{"settings":"table"},"add_rule":{"rule":"table"},"del_rule":{"section":"string"},"add_dns_rule":{"rule":"table"},"del_dns_rule":{"section":"string"},"set_sub_cron":{"schedule":"string"},"add_host":{"host":"table"},"del_host":{"section":"string"},"add_subscription":{"label":"string","url":"string"},"update_sub":{"section":"string"},"apply":{},"check_connectivity":{},"get_running_config":{},"get_log":{},"get_active_node":{}}')
     os.exit(0)
 end
 
@@ -60,11 +60,12 @@ if action == "status" then
     respond({ running = running, sub_updating = sub_updating, sb_version = sb_ver, db_mtime = db_mtime, db_label = db_label })
 
 elseif action == "get_config" then
-    local cfg = { main = {}, nodes = {}, custom_rules = {}, dns_rules = {}, subscriptions = {}, sub_nodes = {} }
+    local cfg = { main = {}, nodes = {}, custom_rules = {}, dns_rules = {}, hosts = {}, subscriptions = {}, sub_nodes = {} }
     uci:foreach("singbox", "main",         function(s) cfg.main = s end)
     uci:foreach("singbox", "node",         function(s) cfg.nodes[s[".name"]] = s end)
     uci:foreach("singbox", "custom_rule",  function(s) cfg.custom_rules[s[".name"]] = s end)
     uci:foreach("singbox", "dns_rule",     function(s) cfg.dns_rules[s[".name"]] = s end)
+    uci:foreach("singbox", "hosts_entry",  function(s) cfg.hosts[s[".name"]] = s end)
     uci:foreach("singbox", "subscription", function(sub)
         local sec = sub[".name"]
         cfg.subscriptions[sec] = sub
@@ -82,6 +83,18 @@ elseif action == "get_config" then
             table.insert(cfg.sub_nodes, n)
         end
     end)
+    -- schedule of subscription auto-update: the crontab line is the source of truth
+    cfg.sub_cron = "disable"
+    local cf = io.open("/etc/crontabs/root", "r")
+    if cf then
+        for line in cf:lines() do
+            if line:find("singbox-sub-updater", 1, true) then
+                cfg.sub_cron = line:match("^%s*(%S+%s+%S+%s+%S+%s+%S+%s+%S+)%s") or "disable"
+                break
+            end
+        end
+        cf:close()
+    end
     respond(cfg)
 
 elseif action == "add_subscription" then
@@ -122,7 +135,13 @@ elseif action == "add_rule" then
             else
                 local tmp = dest .. ".tmp"
                 local url = "https://github.com/MetaCubeX/meta-rules-dat/raw/sing/geo/geosite/" .. safe_cat .. ".srs"
-                os.execute("wget -q -T 15 -O '" .. tmp .. "' '" .. url .. "' 2>/dev/null")
+                -- Same approach as update-rules.sh: source ports 57321-57325 bypass tproxy (direct),
+                -- 57330-57334 go through the current proxy node. Plain wget goes through tproxy and times out.
+                local function fetch(lp)
+                    local r = os.execute("curl -fsL --local-port " .. lp .. " --connect-timeout 8 --max-time 15 -o '" .. tmp .. "' '" .. url .. "' 2>/dev/null")
+                    return r == 0 or r == true   -- Lua 5.1 returns a number, 5.2+ a boolean
+                end
+                if not fetch("57321-57325") then fetch("57330-57334") end
                 local tf = io.open(tmp, "r")
                 local size = tf and tf:seek("end") or 0
                 if tf then tf:close() end
@@ -130,7 +149,7 @@ elseif action == "add_rule" then
                     os.execute("mv '" .. tmp .. "' '" .. dest .. "'")
                 else
                     os.execute("rm -f '" .. tmp .. "'")
-                    respond({ error = "Категория geosite:" .. safe_cat .. " не найдена или недоступна" })
+                    respond({ error = "Не удалось скачать geosite:" .. safe_cat .. " (категории нет или GitHub недоступен)" })
                 end
             end
         end
@@ -177,6 +196,8 @@ elseif action == "add_node" then
         type=true, tag=true, server=true, server_port=true, uuid=true, security=true, sni=true, pbk=true, sid=true,
         private_key=true, peer_public_key=true, local_address=true, jc=true, jmin=true, jmax=true, s1=true, s2=true,
         s3=true, s4=true, pre_shared_key=true, h1=true, h2=true, h3=true, h4=true,
+        i1=true, i2=true, i3=true, i4=true, i5=true, mtu=true,
+        password=true, obfs=true, obfs_password=true, insecure=true, server_ports=true,
         transport=true, path=true, thost=true, mode=true, flow=true, enabled=true
     }
     if req.node.server then
@@ -187,7 +208,7 @@ elseif action == "add_node" then
     for k, v in pairs(req.node) do
         if allowed[k] then
             local safe = tostring(v):gsub("['\"\\\n\r\t]", "")
-            uci:set("singbox", sname, k, safe)
+            if safe ~= "" then uci:set("singbox", sname, k, safe) end
         end
     end
     uci:save("singbox")
@@ -206,6 +227,8 @@ elseif action == "edit_node" then
         tag=true, server=true, server_port=true, uuid=true, security=true, sni=true, pbk=true, sid=true,
         private_key=true, peer_public_key=true, local_address=true, jc=true, jmin=true, jmax=true, s1=true, s2=true,
         s3=true, s4=true, pre_shared_key=true, h1=true, h2=true, h3=true, h4=true,
+        i1=true, i2=true, i3=true, i4=true, i5=true, mtu=true,
+        password=true, obfs=true, obfs_password=true, insecure=true, server_ports=true,
         transport=true, path=true, thost=true, mode=true, flow=true, enabled=true
     }
     for k, v in pairs(req.node) do
@@ -286,6 +309,59 @@ elseif action == "add_dns_rule" then
 elseif action == "del_dns_rule" then
     if not req.section then respond({ error = "Missing section" }) end
     if uci:get("singbox", req.section) ~= "dns_rule" then respond({ error = "Invalid section type" }) end
+    uci:delete("singbox", req.section)
+    uci:save("singbox")
+    respond({ status = "ok" })
+
+elseif action == "set_sub_cron" then
+    local sched = tostring(req.schedule or "disable"):gsub("^%s+", ""):gsub("%s+$", "")
+    local ok, err = validate.cron(sched)
+    if not ok then respond({ error = "Cron: " .. err }) end
+    os.execute("mkdir -p /etc/crontabs && touch /etc/crontabs/root")
+    local kept = {}
+    local cf = io.open("/etc/crontabs/root", "r")
+    if cf then
+        for line in cf:lines() do
+            if not line:find("singbox-sub-updater", 1, true) then table.insert(kept, line) end
+        end
+        cf:close()
+    end
+    if sched ~= "disable" then
+        -- reload only when the service is enabled: the new cache must be recompiled into the running config
+        table.insert(kept, sched .. " /usr/sbin/singbox-sub-updater >/dev/null 2>&1;"
+            .. " [ \"$(uci -q get singbox.main.enabled)\" = 1 ] && /etc/init.d/sing-box reload >/dev/null 2>&1")
+    end
+    local wf = io.open("/etc/crontabs/root.tmp", "w")
+    if not wf then respond({ error = "Не удалось записать crontab" }) end
+    wf:write(table.concat(kept, "\n"), #kept > 0 and "\n" or "")
+    wf:close()
+    os.execute("mv /etc/crontabs/root.tmp /etc/crontabs/root && /etc/init.d/cron restart >/dev/null 2>&1")
+    respond({ status = "ok" })
+
+elseif action == "add_host" then
+    local h = req.host
+    if type(h) ~= "table" or not h.domain or not h.ip or h.domain == "" or h.ip == "" then
+        respond({ error = "Укажите домен и IP" })
+    end
+    if h.domain:find("[,%s]") or h.domain:find("^geosite:") then respond({ error = "Домен: нужен один домен без пробелов" }) end
+    do
+        local ok, err = validate.domain_list(h.domain)
+        if not ok then respond({ error = "Домен: " .. err }) end
+    end
+    if h.ip:find("[/,%s]") then respond({ error = "IP: нужен один адрес без маски" }) end
+    do
+        local ok, err = validate.ip_cidr_list(h.ip)
+        if not ok then respond({ error = "IP: " .. err }) end
+    end
+    local sname = uci:add("singbox", "hosts_entry")
+    uci:set("singbox", sname, "domain", (tostring(h.domain):gsub("['\"\\]", "")))
+    uci:set("singbox", sname, "ip", (tostring(h.ip):gsub("['\"\\]", "")))
+    uci:save("singbox")
+    respond({ status = "ok", section = sname })
+
+elseif action == "del_host" then
+    if not req.section then respond({ error = "Missing section" }) end
+    if uci:get("singbox", req.section) ~= "hosts_entry" then respond({ error = "Invalid section type" }) end
     uci:delete("singbox", req.section)
     uci:save("singbox")
     respond({ status = "ok" })

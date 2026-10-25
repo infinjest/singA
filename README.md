@@ -1,6 +1,6 @@
 # singA
 
-TProxy VPN-клиент для роутеров архитектуры arm64 на OpenWrt. Поддержка xhttp и awg2, раздельное туннелирование, гигиена DNS, веб-интерфейс на порту `1104`.
+TProxy VPN-клиент для роутеров архитектуры arm64 на OpenWrt. Поддержка xhttp и awg2 2.0, раздельное туннелирование, гигиена DNS, веб-интерфейс на порту `1104`.
 
 ```sh
 sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install.sh)"
@@ -11,8 +11,9 @@ sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install
 ## Возможности
 
 **Протоколы**
-- AmneziaWG2 - импорт файла `amnezia_config.vpn`, сгенерированного приложением AmneziaVPN
+- AmneziaWG2 - импорт файла `amnezia_config.vpn`, сгенерированного приложением AmneziaVPN, или конфига WARP .conf
 - vless + xhttp/tcp + reality - импорт по ссылке `vless://` (поддерживается основной ключ PaperVPN)
+- Hysteria2 - импорт по ссылке `hysteria2://` или `hy2://` (обфускация salamander)
 
 **Маршрутизация**
 - 3 режима: 1) всё в proxy; 2) всё в proxy, кроме РФ-доменов; 3) обход РКН (дефолт) - в proxy только заблокированное/замедленное в РФ + исключения
@@ -21,6 +22,7 @@ sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install
 **DNS**
 - Заблокированные домены резолвятся через DoH (из списка или свой), остальные - через локальный DNS (из списка или свой)
 - Кастомные DNS-серверы для отдельных доменов - в режиме «обход РКН»
+- Кастомные DNS-записи (аналог файла hosts)
 
 **Совместимость**
 - Блокировка QUIC (UDP/443) - часть приложений плохо работает с QUIC поверх туннеля, reject откатывает их на TCP. Включено по умолчанию
@@ -138,8 +140,8 @@ sh /usr/sbin/singbox-uninstall        # удаление (--purge для уда�
 
 <details>
 
-<summary>Ссылка на скриншот веб-интерфейса версии 0.10.5</summary>
+<summary>Ссылка на скриншот веб-интерфейса версии 0.10.7</summary>
 
-https://drive.google.com/file/d/1KyIQCVlP4fM_YUPtZOp6N5GML2H4Qiug/view?usp=drive_link
+https://drive.google.com/file/d/1uyUW1D9q9EvJnRb8fkQwGKtnox2F6tOT/view?usp=drive_link
 
 </details>
