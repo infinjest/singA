@@ -13,7 +13,7 @@ GITHUB_USER="infinjest"
 REPO_NAME="singA"
 BRANCH="main"
 RAW_BASE="https://raw.githubusercontent.com/${GITHUB_USER}/${REPO_NAME}/${BRANCH}"
-SINGA_VERSION="0.10.7"
+SINGA_VERSION="0.10.8"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 log() { echo "[singA] $*"; }
@@ -294,7 +294,7 @@ cat > "${ACL_DIR}/singbox.json" << 'EOF'
         "add_node", "edit_node", "del_node", "set_settings",
         "add_rule", "del_rule",
         "add_dns_rule", "del_dns_rule", "add_host", "del_host", "set_sub_cron",
-        "add_subscription", "update_sub",
+        "add_subscription", "update_sub", "toggle_sub_node",
         "apply", "check_connectivity", "get_running_config", "get_log"
       ]},
       "uci": { "singbox": ["*"] }
@@ -420,6 +420,14 @@ if command -v crontab >/dev/null 2>&1; then
     fi
 else
     echo "        ~ Skipping crontab setup (command 'crontab' not found)"
+fi
+
+# Subscription auto-update: the updater now reloads sing-box itself (only when nodes changed),
+# so drop the old "; [ ... ] && /etc/init.d/sing-box reload" tail from an existing crontab line
+if [ -f /etc/crontabs/root ] && grep -q 'singbox-sub-updater.*reload' /etc/crontabs/root 2>/dev/null; then
+    run "sed -i '/singbox-sub-updater/s#\\(singbox-sub-updater >/dev/null 2>&1\\);.*#\\1#' /etc/crontabs/root"
+    run "/etc/init.d/cron restart 2>/dev/null || true"
+    ok "Subscription auto-update crontab line migrated"
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────

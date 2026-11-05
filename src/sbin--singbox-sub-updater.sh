@@ -2,13 +2,33 @@
 # singbox-sub-updater v7.1 — vless (xhttp/ws/grpc/reality) & amneziawg/wireguard support
 
 LOCKFILE="/var/run/singbox-sub.lock"
+RESULT_FILE="/var/run/singbox-sub.result"
 SUB_CACHE_DIR="/etc/sing-box/sub_cache"
+
+# Usage: singbox-sub-updater [--no-reload] [section]
+#   section      update only this subscription (default: all)
+#   --no-reload  never reload sing-box (used by init.d: it is already (re)starting the service)
+# When any node list changed and the service is enabled, sing-box is reloaded once at the end,
+# so manual update, cron and "schedule enabled" all behave the same way.
+NO_RELOAD=0
+ONLY_SEC=""
+for arg in "$@"; do
+    case "$arg" in
+        --no-reload) NO_RELOAD=1 ;;
+        *)           ONLY_SEC="$arg" ;;
+    esac
+done
+
+CHANGED=0
+ERRORS=0
+NODES_TOTAL=0
 
 if [ -f "$LOCKFILE" ]; then
     pid=$(cat "$LOCKFILE" 2>/dev/null)
     kill -0 "$pid" 2>/dev/null && exit 0
 fi
 echo "$$" > "$LOCKFILE"
+rm -f "$RESULT_FILE"
 trap "rm -f $LOCKFILE /tmp/sub_parser.awk /tmp/sub_raw.tmp* /tmp/parsed_nodes.txt; exit" INT TERM EXIT
 
 cat << 'EOF' > /tmp/sub_parser.awk
@@ -53,6 +73,8 @@ function url_decode(str,    res, i, c, hex) {
 
     idx = index(line, "@")
     if (idx > 0) { uuid = substr(line, 1, idx - 1); addr = substr(line, idx + 1) } else { addr = line }
+    # "host:8443/" (slash before "?") is valid: drop the path, else the port becomes "8443/"
+    sub(/\/.*$/, "", addr)
 
     # Safe IPv6 parsing (strip square brackets)
     if (match(addr, /^\[.*\]/)) {
@@ -63,11 +85,13 @@ function url_decode(str,    res, i, c, hex) {
         idx = index(addr, ":")
         if (idx > 0) { host = substr(addr, 1, idx - 1); port = substr(addr, idx + 1) } else host = addr
     }
+    sub(/[^0-9].*$/, "", port)
+    if (port == "") port = "443"
 
     if (tag == "") tag = "Node_" host "_" port
 
     security = "none"; sni = ""; pbk = ""; sid = ""
-    transport = "none"; path = ""; thost = ""; mode = ""; flow = ""
+    transport = "none"; path = ""; thost = ""; mode = ""; flow = ""; service_name = ""
 
     awg_pubkey = ""; awg_addr = ""; awg_jc = "0"
     awg_jmin = "0"; awg_jmax = "0"
@@ -77,7 +101,10 @@ function url_decode(str,    res, i, c, hex) {
     if (query != "") {
         n = split(query, params, "&")
         for (i = 1; i <= n; i++) {
-            split(params[i], kv, "=")
+            # split at the FIRST "=" only: base64 keys end with "=" and must stay intact
+            eq = index(params[i], "=")
+            if (eq > 0) { kv[1] = substr(params[i], 1, eq - 1); kv[2] = substr(params[i], eq + 1) }
+            else        { kv[1] = params[i]; kv[2] = "" }
             if (kv[1] == "security") security = kv[2]
             if (kv[1] == "sni")      sni = url_decode(kv[2])
             if (kv[1] == "pbk")      pbk = kv[2]
@@ -87,6 +114,7 @@ function url_decode(str,    res, i, c, hex) {
             if (kv[1] == "host")     thost = url_decode(kv[2])
             if (kv[1] == "mode")     mode = kv[2]
             if (kv[1] == "flow")     flow = kv[2]
+            if (kv[1] == "serviceName") service_name = url_decode(kv[2])
 
             if (kv[1] == "publickey") awg_pubkey = kv[2]
             if (kv[1] == "address")   awg_addr   = url_decode(kv[2])
@@ -101,6 +129,9 @@ function url_decode(str,    res, i, c, hex) {
             if (kv[1] == "h4")        awg_h4     = kv[2]
         }
     }
+
+    # gRPC: the compiler takes the service name from "path"
+    if (transport == "grpc" && path == "") path = service_name
 
     # Escape everything that could break out of a JSON string
     gsub(/["\\]/, "\\\\&", tag)
@@ -254,20 +285,56 @@ process_subscription() {
     local json_data=$(build_nodes_json /tmp/parsed_nodes.txt)
     rm -f /tmp/parsed_nodes.txt
 
+    NODES_TOTAL=$((NODES_TOTAL + node_count))
+
     local tmpfs_path="/var/run/singbox_sub_${sub_sec}.json"
+    local cache_path="${SUB_CACHE_DIR}/${sub_sec}.json"
+
+    # Previous node list: the tmpfs copy, or the flash copy right after a reboot
+    local old_path="" old_data=""
+    if [ -f "$tmpfs_path" ]; then old_path="$tmpfs_path"
+    elif [ -f "$cache_path" ]; then old_path="$cache_path"
+    fi
+    [ -n "$old_path" ] && old_data=$(cat "$old_path" 2>/dev/null)
+
+    # Always rewrite the tmpfs copy: its mtime is the "last updated" time shown in the UI
     printf '%s' "$json_data" > "${tmpfs_path}.tmp" && mv "${tmpfs_path}.tmp" "$tmpfs_path"
 
-    mkdir -p "$SUB_CACHE_DIR"
-    cp "$tmpfs_path" "${SUB_CACHE_DIR}/${sub_sec}.json"
-    logger -t singbox-sub "OK: ${node_count} nodes cached for ${sub_sec}"
+    if [ -n "$old_data" ] && [ "$old_data" = "$json_data" ]; then
+        # Nothing changed: no flash write, no reload
+        if [ ! -f "$cache_path" ]; then
+            mkdir -p "$SUB_CACHE_DIR"
+            cp "$tmpfs_path" "$cache_path"
+        fi
+        logger -t singbox-sub "OK: ${node_count} nodes, unchanged: ${sub_sec}"
+    else
+        mkdir -p "$SUB_CACHE_DIR"
+        cp "$tmpfs_path" "$cache_path"
+        CHANGED=1
+        logger -t singbox-sub "OK: ${node_count} nodes cached for ${sub_sec}"
+    fi
 }
 
-if [ -n "$1" ]; then
-    process_subscription "$1"
+if [ -n "$ONLY_SEC" ]; then
+    process_subscription "$ONLY_SEC" || ERRORS=$((ERRORS + 1))
 else
-    for sub in $(uci show singbox 2>/dev/null | grep "=subscription" | awk -F'[.=]' '{print $2}'); do
-        process_subscription "$sub"
+    # -X: real section names (cfgXXXXXX). Without it uci prints anonymous sections as
+    # @subscription[0]; the cache was then written as singbox_sub_@subscription[0].json,
+    # which neither rpcd nor the compiler ever read (scheduled update "did nothing").
+    for sub in $(uci -X show singbox 2>/dev/null | awk -F'[.=]' '/^singbox\.[^.]+=subscription$/ {print $2}'); do
+        process_subscription "$sub" || ERRORS=$((ERRORS + 1))
     done
 fi
+
+# Apply the new nodes: one reload for all subscriptions, only if something changed.
+# The lock is still held, so the updater that init.d runs during the reload exits immediately.
+APPLIED=0
+if [ "$CHANGED" -eq 1 ] && [ "$NO_RELOAD" -eq 0 ] && [ "$(uci -q get singbox.main.enabled)" = "1" ]; then
+    logger -t singbox-sub "Nodes changed, reloading sing-box"
+    /etc/init.d/sing-box reload >/dev/null 2>&1 && APPLIED=1
+fi
+
+# Result for the UI (rpcd "status" -> sub_result); written last, right before the lock is released
+printf 'changed=%s\napplied=%s\nerrors=%s\nnodes=%s\n' "$CHANGED" "$APPLIED" "$ERRORS" "$NODES_TOTAL" > "$RESULT_FILE"
 
 rm -f "$LOCKFILE" /tmp/sub_parser.awk

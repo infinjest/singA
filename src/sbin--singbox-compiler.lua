@@ -149,11 +149,39 @@ if dns_remote_detour == "proxy" then
     sb.dns.independent_cache = true -- cache races with optimistic if this is off
 end
 
+-- Gecko obfuscation for Hysteria2 appeared in sing-box 1.14.0. An unknown
+-- version is not treated as a problem: `sing-box check` below has the last word.
+local function log_warn(msg)
+    msg = tostring(msg):gsub("[^%w _%.:,%-]", "?")
+    os.execute("logger -t singbox-compiler \"WARN: " .. msg .. "\"")
+end
+local core_has_gecko
+local function gecko_supported()
+    if core_has_gecko == nil then
+        core_has_gecko = true
+        local p = io.popen("/usr/bin/sing-box version 2>/dev/null | head -n1")
+        if p then
+            local line = p:read("*l") or ""
+            p:close()
+            local maj, min = line:match("(%d+)%.(%d+)%.%d+")
+            if maj and (tonumber(maj) < 1 or (tonumber(maj) == 1 and tonumber(min) < 14)) then
+                core_has_gecko = false
+            end
+        end
+    end
+    return core_has_gecko
+end
+
+-- "[2001:db8::1]" → "2001:db8::1": rpcd accepts both forms, sing-box wants the bare address
+local function bare_host(h)
+    return (tostring(h or ""):gsub("^%[(.*)%]$", "%1"))
+end
+
 local function build_outbound(s, tag)
     local o = {
         type         = s.type,
         tag          = tag,
-        server       = s.server,
+        server       = bare_host(s.server),
         server_port  = tonumber(s.server_port) or 443,
         routing_mark = 255,
         tcp_fast_open = false,
@@ -220,23 +248,46 @@ local function build_outbound(s, tag)
         -- sing-box rejects unknown fields: "multiplex" is not valid for hysteria2
         o.multiplex = nil
         o.password  = s.password
-        if s.obfs == "salamander" and s.obfs_password and s.obfs_password ~= "" then
-            o.obfs = { type = "salamander", password = s.obfs_password }
+        if (s.obfs == "salamander" or s.obfs == "gecko") and s.obfs_password and s.obfs_password ~= "" then
+            o.obfs = { type = s.obfs, password = s.obfs_password }
+            if s.obfs == "gecko" then
+                if not gecko_supported() then
+                    log_warn("node uses gecko obfs, it needs sing-box 1.14.0 or newer")
+                end
+                -- optional on-wire packet size window (core defaults: 512..1200)
+                if validate.gecko_sizes(s.obfs_min_packet_size, s.obfs_max_packet_size) then
+                    local mn, mx = tonumber(s.obfs_min_packet_size), tonumber(s.obfs_max_packet_size)
+                    if mn then o.obfs.min_packet_size = mn end
+                    if mx then o.obfs.max_packet_size = mx end
+                else
+                    log_warn("invalid gecko packet size window ignored, core defaults are used")
+                end
+            end
         end
         o.tls = {
             enabled     = true,
-            server_name = (s.sni and s.sni ~= "") and s.sni or s.server,
+            server_name = (s.sni and s.sni ~= "") and s.sni or bare_host(s.server),
             insecure    = (s.insecure == "1"),
             alpn        = { "h3" }
         }
         -- port hopping (mport=20000-50000 in the share link): sing-box wants "from:to"
+        -- (defense-in-depth: the frontend/rpcd validate too, but UCI can be edited by hand,
+        -- and one bad value would make `sing-box check` reject the whole config)
         if s.server_ports and s.server_ports ~= "" then
-            o.server_ports = {}
-            for r in s.server_ports:gmatch("[^,%s]+") do
-                -- sing-box wants "from:to"; a single port becomes "p:p"
-                table.insert(o.server_ports, r:find("-", 1, true) and (r:gsub("%-", ":")) or (r .. ":" .. r))
+            if validate.port_list(s.server_ports) then
+                o.server_ports = {}
+                for r in s.server_ports:gmatch("[^,%s]+") do
+                    -- sing-box wants "from:to"; a single port becomes "p:p"
+                    if r:find("[%-:]") then
+                        table.insert(o.server_ports, (r:gsub("%-", ":")))
+                    else
+                        table.insert(o.server_ports, r .. ":" .. r)
+                    end
+                end
+                o.server_port = nil
+            else
+                log_warn("invalid port hopping list ignored, the single port is used")
             end
-            if #o.server_ports > 0 then o.server_port = nil else o.server_ports = nil end
         end
     end
     return o
@@ -250,7 +301,7 @@ local function build_endpoint(s, tag)
         private_key = s.private_key or s.uuid,
         peers = {
             {
-                address = s.server,
+                address = bare_host(s.server),
                 port = tonumber(s.server_port) or 51820,
                 public_key = s.peer_public_key,
                 allowed_ips = { "0.0.0.0/0", "::/0" }
@@ -332,6 +383,17 @@ uci:foreach("singbox", "node", function(s)
     table.insert(proxy_tags, t)
 end)
 
+-- Subscription nodes switched off in the UI: "<subscription>|<tag>" entries of the list main.sub_disabled
+local sub_off = {}
+do
+    local raw = uci:get("singbox", "main", "sub_disabled")
+    if type(raw) == "table" then
+        for _, v in ipairs(raw) do sub_off[v] = true end
+    elseif type(raw) == "string" and raw ~= "" then
+        sub_off[raw] = true
+    end
+end
+
 uci:foreach("singbox", "subscription", function(sub)
     local sec = sub[".name"]
     local content
@@ -345,7 +407,7 @@ uci:foreach("singbox", "subscription", function(sub)
     if type(nodes) ~= "table" then return end
 
     for _, s in ipairs(nodes) do
-        if s.tag and s.type and s.server then
+        if s.tag and s.type and s.server and not sub_off[sec .. "|" .. s.tag] then
             node_count = node_count + 1
             local t = "sub_" .. node_count .. "_" .. s.tag
             if s.type == "amneziawg" or s.type == "wireguard" then

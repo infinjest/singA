@@ -7,6 +7,8 @@
     <style>
         :root { --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; --accent: #2563eb; --border: #334155; --danger: #ef4444; --success: #10b981; --warn: #f59e0b; }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; }
+        /* always reserve the scrollbar gutter: otherwise tabs of different height make the whole panel shift sideways */
+        html { overflow-y: scroll; scrollbar-gutter: stable; }
         body { background: var(--bg); color: var(--text); padding: 20px; }
         .container { max-width: 1200px; margin: 0 auto; }
         header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
@@ -43,6 +45,15 @@
         .modal h3 { margin-bottom:16px; }
         .modal-footer { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; }
         .btn-sm { padding:4px 10px; font-size:.85rem; }
+        .col-actions { width: 1%; white-space: nowrap; text-align: right; }
+        /* div inside the cell: max-width on the <td> itself does not work in auto table layout.
+           Fixed width: the column keeps its size when the URL is revealed. The mask is a long run of "*" clipped to that width (fills the column, no "…") */
+        .sub-url { color:#64748b; width:360px; max-width:100%; overflow:hidden; text-overflow:clip; white-space:nowrap; cursor:pointer; font-family:monospace; }
+        .sub-url[data-shown="1"] { white-space:normal; word-break:break-all; }
+        /* the revealed URL wraps and makes the row taller: top alignment keeps the other cells of the row in place */
+        #sub-table td { vertical-align:top; }
+        .row-actions { display:inline-flex; gap:4px; justify-content:flex-end; }
+        .sub-meta { font-size:.75rem; color:#64748b; margin-top:2px; }
         .toggle-off { background: var(--border); color: #94a3b8; }
         .toggle-dirty { background: #f59e0b; color: #1e293b; font-weight: 600; }
         .suggest-box { position: absolute; left: 0; right: 0; top: 100%; margin-top: 2px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; max-height: 180px; overflow-y: auto; z-index: 50; box-shadow: 0 4px 12px rgba(0,0,0,.3); }
@@ -163,7 +174,7 @@
                         <button class="btn" onclick="addUserRule()" style="height:38px;padding:0 15px">Добавить</button>
                     </div>
                 </div>
-                <table id="rules-table"><thead><tr><th>Источник</th><th>Домены</th><th>IP назначения</th><th>Действие</th><th></th></tr></thead><tbody></tbody></table>
+                <table id="rules-table"><thead><tr><th>Источник</th><th>Домены</th><th>IP назначения</th><th>Действие</th><th class="col-actions"></th></tr></thead><tbody></tbody></table>
             </div>
 
             <div id="card-dns-rules" class="card">
@@ -176,7 +187,7 @@
                         <button class="btn" onclick="addDnsRule()" style="height:38px;padding:0 15px">Добавить</button>
                     </div>
                 </div>
-                <table id="dns-rules-table"><thead><tr><th>Домены</th><th>DNS сервер</th><th>Через прокси</th><th></th></tr></thead><tbody></tbody></table>
+                <table id="dns-rules-table"><thead><tr><th>Домены</th><th>DNS сервер</th><th>Через прокси</th><th class="col-actions"></th></tr></thead><tbody></tbody></table>
             </div>
 
             <div id="card-hosts" class="card">
@@ -188,7 +199,7 @@
                         <button class="btn" onclick="addHost()" style="height:38px;padding:0 15px">Добавить</button>
                     </div>
                 </div>
-                <table id="hosts-table"><thead><tr><th>Домен</th><th>IP</th><th></th></tr></thead><tbody></tbody></table>
+                <table id="hosts-table"><thead><tr><th>Домен</th><th>IP</th><th class="col-actions"></th></tr></thead><tbody></tbody></table>
             </div>
         </div>
     </div>
@@ -208,7 +219,7 @@
                     <button class="btn" onclick="addSubscription()">+ Подписка</button>
                 </div>
             </h3>
-            <table id="sub-table"><thead><tr><th>Имя</th><th>URL</th><th>Узлов</th><th>Действия</th></tr></thead><tbody></tbody></table>
+            <table id="sub-table"><thead><tr><th>Имя</th><th>URL</th><th>Узлов</th><th class="col-actions"></th></tr></thead><tbody></tbody></table>
         </div>
         <div class="card">
             <h3 style="display:flex;justify-content:space-between;align-items:center">
@@ -231,6 +242,7 @@
 let ubusToken = "00000000000000000000000000000000";
 let statusTimer = null; let loadedRouteMode = null;
 let dirty = false; let currentEnabled = false;
+let subUrls = {};  // subscription section → full URL; it reaches the DOM only after a click on the URL cell (toggleSubUrl)
 
 async function toggleNode(sec, newVal) {
     await ubusCall("singbox", "edit_node", { section: sec, node: { enabled: newVal } });
@@ -254,46 +266,74 @@ async function toggleAllNodes() {
 }
 
 function shareNode(sec) {
+    ubusCall("singbox", "get_config", {}).then(cfg => exportNode((cfg.nodes || {})[sec]));
+}
+
+// Subscription node: found by (subscription, tag) in the cached node list, it has no UCI section
+function shareSubNode(btn) {
     ubusCall("singbox", "get_config", {}).then(cfg => {
-        const n = (cfg.nodes || {})[sec];
-        if (!n) { alert('Узел не найден'); return; }
-        let uri = '';
-        if (n.type === 'vless') {
-            const params = new URLSearchParams();
-            if (n.security)  params.set('security', n.security);
-            if (n.sni)        params.set('sni', n.sni);
-            if (n.transport)  params.set('type', n.transport);
-            if (n.path)       params.set('path', n.path);
-            if (n.flow)       params.set('flow', n.flow);
-            uri = `vless://${n.uuid}@${n.server}:${n.server_port}?${params.toString()}#${encodeURIComponent(n.tag || '')}`;
-        } else if (n.type === 'amneziawg' || n.type === 'wireguard') {
-            let iface = `[Interface]\nPrivateKey = ${n.private_key || ''}\nAddress = ${n.local_address || ''}\n`;
-            if (n.mtu) iface += `MTU = ${n.mtu}\n`;
-            if (n.type === 'amneziawg') {
-                [['Jc','jc'],['Jmin','jmin'],['Jmax','jmax'],['S1','s1'],['S2','s2'],['S3','s3'],['S4','s4'],
-                 ['H1','h1'],['H2','h2'],['H3','h3'],['H4','h4'],['I1','i1'],['I2','i2'],['I3','i3'],['I4','i4'],['I5','i5']]
-                    .forEach(([k, f]) => { if (n[f] && n[f] !== '0') iface += `${k} = ${n[f]}\n`; });
-            }
-            uri = `${iface}\n[Peer]\nPublicKey = ${n.peer_public_key || ''}\n` +
-                  (n.pre_shared_key ? `PresharedKey = ${n.pre_shared_key}\n` : '') +
-                  `Endpoint = ${n.server.includes(':') ? '[' + n.server + ']' : n.server}:${n.server_port}\nAllowedIPs = 0.0.0.0/0, ::/0\n`;
-        } else if (n.type === 'hysteria2') {
-            const params = new URLSearchParams();
-            if (n.sni)                         params.set('sni', n.sni);
-            if (n.insecure === '1')            params.set('insecure', '1');
-            if (n.obfs === 'salamander')     { params.set('obfs', 'salamander'); params.set('obfs-password', n.obfs_password || ''); }
-            if (n.server_ports)                params.set('mport', n.server_ports);
-            uri = `hysteria2://${encodeURIComponent(n.password || '')}@${n.server}:${n.server_port}/?${params.toString()}#${encodeURIComponent(n.tag || '')}`;
-        } else {
-            alert('Экспорт для этого типа узла не поддерживается');
-            return;
-        }
-        const blob = new Blob([uri], { type: 'text/plain' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = (n.tag || 'node') + (n.type === 'vless' || n.type === 'hysteria2' ? '.txt' : '.conf');
-        a.click();
+        const n = (cfg.sub_nodes || []).find(x => x._subscription === btn.dataset.sub && x.tag === btn.dataset.tag);
+        // for AmneziaWG/WireGuard entries of a subscription the private key is stored in "uuid"
+        exportNode(n && (n.type === 'amneziawg' || n.type === 'wireguard') ? { ...n, private_key: n.private_key || n.uuid } : n);
     });
+}
+
+async function toggleSubNode(btn) {
+    const res = await ubusCall("singbox", "toggle_sub_node", { subscription: btn.dataset.sub, tag: btn.dataset.tag, enabled: btn.dataset.val });
+    if (res.error || res.status !== 'ok') { alert('Ошибка: ' + (typeof res.error === 'string' ? res.error : 'не удалось изменить узел')); return; }
+    await ubusCall("singbox", "apply");
+    loadData();
+}
+
+function exportNode(n) {
+    if (!n) { alert('Узел не найден'); return; }
+    let uri = '';
+    if (n.type === 'vless') {
+        const params = new URLSearchParams();
+        if (n.security)  params.set('security', n.security);
+        if (n.sni)        params.set('sni', n.sni);
+        if (n.pbk)        params.set('pbk', n.pbk);
+        if (n.sid)        params.set('sid', n.sid);
+        if (n.transport)  params.set('type', n.transport);
+        // gRPC: the service name lives in "path" but the link format calls it serviceName
+        if (n.path)       params.set(n.transport === 'grpc' ? 'serviceName' : 'path', n.path);
+        if (n.thost)      params.set('host', n.thost);
+        if (n.mode)       params.set('mode', n.mode);
+        if (n.flow)       params.set('flow', n.flow);
+        uri = `vless://${n.uuid}@${n.server}:${n.server_port}?${params.toString()}#${encodeURIComponent(n.tag || '')}`;
+    } else if (n.type === 'amneziawg' || n.type === 'wireguard') {
+        let iface = `[Interface]\nPrivateKey = ${n.private_key || ''}\nAddress = ${n.local_address || ''}\n`;
+        if (n.mtu) iface += `MTU = ${n.mtu}\n`;
+        if (n.type === 'amneziawg') {
+            [['Jc','jc'],['Jmin','jmin'],['Jmax','jmax'],['S1','s1'],['S2','s2'],['S3','s3'],['S4','s4'],
+             ['H1','h1'],['H2','h2'],['H3','h3'],['H4','h4'],['I1','i1'],['I2','i2'],['I3','i3'],['I4','i4'],['I5','i5']]
+                .forEach(([k, f]) => { if (n[f] && n[f] !== '0') iface += `${k} = ${n[f]}\n`; });
+        }
+        uri = `${iface}\n[Peer]\nPublicKey = ${n.peer_public_key || ''}\n` +
+              (n.pre_shared_key ? `PresharedKey = ${n.pre_shared_key}\n` : '') +
+              `Endpoint = ${n.server.includes(':') ? '[' + n.server + ']' : n.server}:${n.server_port}\nAllowedIPs = 0.0.0.0/0, ::/0\n`;
+    } else if (n.type === 'hysteria2') {
+        const params = new URLSearchParams();
+        if (n.sni)                         params.set('sni', n.sni);
+        if (n.insecure === '1')            params.set('insecure', '1');
+        if (n.obfs === 'salamander' || n.obfs === 'gecko') {
+            params.set('obfs', n.obfs); params.set('obfs-password', n.obfs_password || '');
+            if (n.obfs === 'gecko') {
+                if (n.obfs_min_packet_size) params.set('obfs-min-packet-size', n.obfs_min_packet_size);
+                if (n.obfs_max_packet_size) params.set('obfs-max-packet-size', n.obfs_max_packet_size);
+            }
+        }
+        if (n.server_ports)                params.set('mport', n.server_ports);
+        uri = `hysteria2://${encodeURIComponent(n.password || '')}@${n.server}:${n.server_port}/?${params.toString()}#${encodeURIComponent(n.tag || '')}`;
+    } else {
+        alert('Экспорт для этого типа узла не поддерживается');
+        return;
+    }
+    const blob = new Blob([uri], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (n.tag || 'node') + (n.type === 'vless' || n.type === 'hysteria2' ? '.txt' : '.conf');
+    a.click();
 }
 
 function openEditModal(btnEl) {
@@ -316,6 +356,9 @@ function openEditModal(btnEl) {
         document.getElementById('edit-hy2-sni').value      = n.sni           || '';
         document.getElementById('edit-hy2-obfs').value     = n.obfs          || '';
         document.getElementById('edit-hy2-obfspw').value   = n.obfs_password || '';
+        document.getElementById('edit-hy2-gecko-min').value = n.obfs_min_packet_size || '';
+        document.getElementById('edit-hy2-gecko-max').value = n.obfs_max_packet_size || '';
+        toggleHy2ObfsFields();
         document.getElementById('edit-hy2-insecure').checked = n.insecure === '1';
         document.getElementById('edit-hy2-ports').value    = n.server_ports  || '';
     } else if (!isAwg) {
@@ -372,6 +415,9 @@ async function saveEditNode() {
         node.sni           = document.getElementById('edit-hy2-sni').value;
         node.obfs          = document.getElementById('edit-hy2-obfs').value;
         node.obfs_password = document.getElementById('edit-hy2-obfspw').value;
+        const isGecko = node.obfs === 'gecko';
+        node.obfs_min_packet_size = isGecko ? document.getElementById('edit-hy2-gecko-min').value.trim() : '';
+        node.obfs_max_packet_size = isGecko ? document.getElementById('edit-hy2-gecko-max').value.trim() : '';
         node.insecure      = document.getElementById('edit-hy2-insecure').checked ? '1' : '';
         node.server_ports  = document.getElementById('edit-hy2-ports').value;
     } else if (!isAwg) {
@@ -500,9 +546,15 @@ function prettyNodeTag(tag) {
     return t;
 }
 
+// Port for the table: for a node with port hopping show the whole list/range, not just the first port
+function nodePortLabel(n) {
+    if (n.type === 'hysteria2' && n.server_ports) return String(n.server_ports).replace(/\s*,\s*/g, ', ');
+    return n.server_port;
+}
+
 function protoLabel(n) {
     if (n.type === 'amneziawg') return 'amneziaWG2';
-    if (n.type === 'hysteria2') return n.obfs === 'salamander' ? 'hysteria2-salamander' : 'hysteria2';
+    if (n.type === 'hysteria2') return (n.obfs === 'salamander' || n.obfs === 'gecko') ? 'hysteria2-' + n.obfs : 'hysteria2';
     if (n.type === 'vless') {
         const parts = ['vless'];
         if (n.transport && n.transport !== 'none') parts.push(n.transport);
@@ -510,6 +562,13 @@ function protoLabel(n) {
         return parts.join('-');
     }
     return n.type;
+}
+
+// A subscription link usually contains a token, so the table shows it masked (a fixed run of "*")
+// and reveals it on click (see toggleSubUrl)
+function maskSubUrl(url) {
+    // the real length is hidden; the run is longer than any column width and is clipped by .sub-url (overflow:hidden)
+    return String(url || '') ? '*'.repeat(64) : '';
 }
 
 function maskServer(s) {
@@ -695,14 +754,14 @@ async function loadData() {
         const badgeColor = r.outbound === 'proxy' ? 'color:var(--accent); background:rgba(37,99,235,0.1)' : 'color:var(--success); background:rgba(16,185,129,0.1)';
         rHtml += `<tr><td>${esc(r.source) || 'Все (LAN)'}</td><td style="word-break:break-all">${esc(r.domain) || '—'}</td><td>${esc(r.ip) || '—'}</td>
             <td><span style="padding:4px 8px; border-radius:4px; font-size:.8rem; font-weight:600; ${badgeColor}">${r.outbound.toUpperCase()}</span></td>
-            <td><button class="btn btn-danger" style="padding:4px 10px" onclick="deleteItem('${esc(sec)}', true)">×</button></td>`;
+            <td class="col-actions"><button class="btn btn-danger" style="padding:4px 10px" onclick="deleteItem('${esc(sec)}', true)">×</button></td></tr>`;
     });
     document.querySelector('#rules-table tbody').innerHTML = rHtml || '<tr><td colspan="5" style="color:#64748b; text-align:center;">Нет исключений. Работают системные правила.</td></tr>';
 
     let hostsHtml = '';
     Object.entries(cfg.hosts || {}).forEach(([sec, h]) => {
         hostsHtml += `<tr><td style="word-break:break-all">${esc(h.domain)}</td><td>${esc(h.ip)}</td>
-            <td><button class="btn btn-danger" style="padding:4px 10px" onclick="deleteHost('${esc(sec)}')">×</button></td></tr>`;
+            <td class="col-actions"><button class="btn btn-danger" style="padding:4px 10px" onclick="deleteHost('${esc(sec)}')">×</button></td></tr>`;
     });
     document.querySelector('#hosts-table tbody').innerHTML = hostsHtml || '<tr><td colspan="3" style="color:#64748b; text-align:center;">Нет записей</td></tr>';
 
@@ -710,17 +769,20 @@ async function loadData() {
     Object.entries(cfg.dns_rules || {}).forEach(([sec, r]) => {
         dnsRuleHtml += `<tr><td style="word-break:break-all">${esc(r.domain)}</td><td style="word-break:break-all">${esc(r.server)}</td>
             <td>${r.via_proxy === "1" ? "да" : "нет"}</td>
-            <td><button class="btn btn-danger" style="padding:4px 10px" onclick="deleteDnsRule('${esc(sec)}')">×</button></td></tr>`;
+            <td class="col-actions"><button class="btn btn-danger" style="padding:4px 10px" onclick="deleteDnsRule('${esc(sec)}')">×</button></td></tr>`;
     });
     document.querySelector('#dns-rules-table tbody').innerHTML = dnsRuleHtml || '<tr><td colspan="4" style="color:#64748b; text-align:center;">Нет DNS-правил для отдельных доменов</td></tr>';
 
+    subUrls = {};
     const subCounts = {};
     (cfg.sub_nodes || []).forEach(n => { subCounts[n._subscription] = (subCounts[n._subscription] || 0) + 1; });
     let subHtml = '';
     Object.entries(cfg.subscriptions || {}).forEach(([sec, sub]) => {
-        subHtml += `<tr><td><b>${esc(sub.label)}</b></td><td style="color:#64748b;max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(sub.url)}</td>
-            <td>${subCounts[sec] || 0}</td><td><button class="btn btn-success" style="padding:4px 10px" onclick="syncSub('${esc(sec)}')">Синхро</button>
-            <button class="btn btn-danger" style="padding:4px 10px;margin-left:4px" onclick="deleteItem('${esc(sec)}')">Удалить</button></td></tr>`;
+        subUrls[sec] = sub.url || '';
+        const upd = sub._updated ? new Date(sub._updated * 1000).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+        subHtml += `<tr><td><b>${esc(sub.label)}</b><div class="sub-meta">${upd ? 'обновлено ' + esc(upd) : 'ещё не обновлялась'}</div></td><td><div class="sub-url" data-sec="${esc(sec)}" data-shown="0" title="Нажмите, чтобы показать и скопировать ссылку" onclick="toggleSubUrl(this)">${esc(maskSubUrl(sub.url))}</div></td>
+            <td>${subCounts[sec] || 0}</td><td class="col-actions"><button class="btn btn-success" style="padding:4px 10px" onclick="syncSub('${esc(sec)}')">Обновить вручную</button>
+            <button class="btn btn-danger" style="padding:4px 10px;margin-left:4px" onclick="deleteItem('${esc(sec)}')" title="Удалить">×</button></td></tr>`;
     });
     document.querySelector('#sub-table tbody').innerHTML = subHtml || '<tr><td colspan="4" style="color:#64748b">Нет подписок</td></tr>';
 
@@ -729,16 +791,22 @@ async function loadData() {
         const isOff = n.enabled === "0";
         const nodeDataJson = JSON.stringify(n).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
         nodeHtml += `<tr style="${isOff ? 'opacity:.45' : ''}">
-            <td>${esc(prettyNodeTag(n.tag))}</td><td>${esc(protoLabel(n))}</td><td>${esc(maskServer(n.server))}</td><td>${esc(n.server_port)}</td>
-            <td style="display:flex;gap:4px;flex-wrap:wrap">
+            <td>${esc(prettyNodeTag(n.tag))}</td><td>${esc(protoLabel(n))}</td><td>${esc(maskServer(n.server))}</td><td>${esc(nodePortLabel(n))}</td>
+            <td class="col-actions"><div class="row-actions">
                 <button class="btn btn-sm ${isOff ? 'toggle-off' : 'btn-success'}" title="${isOff ? 'Узел отключён' : 'Узел активен'}" onclick="toggleNode('${esc(sec)}','${isOff ? '1' : '0'}')">${isOff ? '○ Выкл' : '● Вкл'}</button>
                 <button class="btn btn-sm" data-sec="${esc(sec)}" data-node="${nodeDataJson}" onclick="openEditModal(this)">✎</button>
                 <button class="btn btn-sm" onclick="shareNode('${esc(sec)}')" title="Поделиться">⇧</button>
                 <button class="btn btn-sm btn-danger" onclick="deleteItem('${esc(sec)}')" title="Удалить">×</button>
-            </td></tr>`;
+            </div></td></tr>`;
     });
     (cfg.sub_nodes || []).forEach(n => {
-        nodeHtml += `<tr><td>${esc(prettyNodeTag(n.tag))} <span class="sub-badge">${esc(n._sub_label)}</span></td><td>${esc(protoLabel(n))}</td><td>${esc(maskServer(n.server))}</td><td>${esc(n.server_port)}</td><td style="color:#475569">—</td></tr>`;
+        const isOff = n._sub_off === "1";
+        const ids = `data-sub="${esc(n._subscription)}" data-tag="${esc(n.tag)}"`;
+        nodeHtml += `<tr style="${isOff ? 'opacity:.45' : ''}"><td>${esc(prettyNodeTag(n.tag))} <span class="sub-badge">${esc(n._sub_label)}</span></td><td>${esc(protoLabel(n))}</td><td>${esc(maskServer(n.server))}</td><td>${esc(nodePortLabel(n))}</td>
+            <td class="col-actions"><div class="row-actions">
+                <button class="btn btn-sm ${isOff ? 'toggle-off' : 'btn-success'}" ${ids} data-val="${isOff ? '1' : '0'}" title="${isOff ? 'Узел отключён' : 'Узел активен'}" onclick="toggleSubNode(this)">${isOff ? '○ Выкл' : '● Вкл'}</button>
+                <button class="btn btn-sm" ${ids} onclick="shareSubNode(this)" title="Поделиться">⇧</button>
+            </div></td></tr>`;
     });
     document.querySelector('#nodes-table tbody').innerHTML = nodeHtml || '<tr><td colspan="5" style="color:#64748b">Нет узлов</td></tr>';
     updateStatus();
@@ -852,9 +920,16 @@ async function saveSettings() {
 }
 
 async function setSubCron() {
-    const res = await ubusCall("singbox", "set_sub_cron", { schedule: document.getElementById('cfg-sub-cron').value });
-    if (res.error) { alert('Ошибка: ' + res.error); loadData(); return; }
-    showToast('Расписание обновления подписок сохранено');
+    const schedule = document.getElementById('cfg-sub-cron').value;
+    const res = await ubusCall("singbox", "set_sub_cron", { schedule });
+    // when ubus refuses (e.g. missing ACL rights) the reply is an array with a status code, not an object with "error": treat it as a failure
+    if (res.error || res.status !== 'ok') {
+        alert('Ошибка: ' + (typeof res.error === 'string' ? res.error : 'не удалось сохранить расписание'));
+        loadData(); return;
+    }
+    if (schedule === 'disable') { showToast('Автообновление подписок отключено'); return; }
+    showToast('Расписание сохранено, подписки обновляются');
+    syncSub();  // update right away the same way as "Обновить вручную"; the result toast replaces this one
 }
 
 async function addSubscription() {
@@ -864,13 +939,59 @@ async function addSubscription() {
     if (!res.error) loadData(); else alert('Ошибка: ' + res.error);
 }
 
+// Copies text to the clipboard (navigator.clipboard needs a secure context; on http:// fall back to execCommand)
+async function copyText(text) {
+    if (window.isSecureContext && navigator.clipboard) {
+        try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* пробуем запасной способ */ }
+    }
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        const copied = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return !!copied;
+    } catch (e) { return false; }
+}
+
+// Click on a masked URL: reveal it and copy it to the clipboard; a second click hides it again
+async function toggleSubUrl(el) {
+    const sec = el.dataset.sec, url = subUrls[sec];
+    if (!url) { alert('URL подписки не найден.'); return; }
+    if (el.dataset.shown === '1') {
+        el.dataset.shown = '0';
+        el.textContent = maskSubUrl(url);
+        return;
+    }
+    el.dataset.shown = '1';
+    el.textContent = url;
+    if (await copyText(url)) showToast('Ссылка подписки скопирована в буфер обмена');
+    else prompt('Не удалось скопировать автоматически. Скопируйте ссылку вручную (Ctrl+C):', url);
+}
+
+// Without sec all subscriptions are updated. The updater runs in the background (status.sub_updating); when it is done
+// the tables are reloaded and the outcome is shown. If the nodes changed, the updater itself reloads sing-box.
 async function syncSub(sec) {
-    await ubusCall("singbox", "update_sub", { section: sec });
+    await ubusCall("singbox", "update_sub", sec ? { section: sec } : {});
     let attempts = 0;
     const poll = setInterval(async () => {
         const s = await ubusCall("singbox", "status");
-        if (!s.sub_updating || ++attempts > 30) { clearInterval(poll); loadData(); }
+        if (s.sub_updating && ++attempts <= 60) return;
+        clearInterval(poll);
+        await loadData();
+        showSubResult(s.sub_result);
     }, 2000);
+}
+
+function showSubResult(r) {
+    if (!r) { alert('Не удалось обновить подписку. Подробности: logread | grep singbox-sub'); return; }
+    if (r.errors > 0) { alert(`Обновление завершено с ошибками (${r.errors}). Узлов в подписках: ${r.nodes}. Подробности: logread | grep singbox-sub`); return; }
+    if (!r.changed) showToast(`Подписки обновлены, изменений нет (узлов: ${r.nodes})`);
+    else if (r.applied) showToast(`Подписки обновлены, узлов: ${r.nodes}. Изменения применены`);
+    else showToast(`Подписки обновлены, узлов: ${r.nodes}. Изменения вступят в силу после запуска прокси`);
 }
 
 async function addHost() {
@@ -1022,7 +1143,31 @@ async function importVpnFile(e) {
     }
 }
 
-// ── Hysteria2 URI parser: hysteria2://[auth@]host[:port][,mport]/?obfs=salamander&obfs-password=..&sni=..&insecure=1#name ──
+// Show the Gecko fields only when gecko obfuscation is selected
+function toggleHy2ObfsFields() {
+    const gecko = document.getElementById('edit-hy2-obfs').value === 'gecko';
+    document.getElementById('edit-hy2-gecko-fields').style.display = gecko ? '' : 'none';
+}
+
+// hysteria2 port list: "443", "5000-6000", "443,5000-6000" ("5000:6000" is accepted too).
+// Returns a normalized array ("a" or "a-b"), throws an Error on invalid values.
+function parseHy2Ports(list, what) {
+    const out = [];
+    for (const raw of String(list || '').split(',')) {
+        const item = raw.trim();
+        if (!item) continue;
+        const pm = item.match(/^(\d+)(?:[-:](\d+))?$/);
+        if (!pm) throw new Error(`${what}: "${item}" не похоже на порт или диапазон`);
+        const a = +pm[1], b = pm[2] === undefined ? a : +pm[2];
+        if (a < 1 || a > 65535 || b < 1 || b > 65535) throw new Error(`${what}: порт в "${item}" вне диапазона 1-65535`);
+        if (a > b) throw new Error(`${what}: в диапазоне "${item}" начало больше конца`);
+        const norm = pm[2] === undefined ? String(a) : `${a}-${b}`;
+        if (!out.includes(norm)) out.push(norm);
+    }
+    return out;
+}
+
+// ── Hysteria2 URI parser: hysteria2://[auth@]host[:port[,ranges]]/?obfs=salamander|gecko&obfs-password=..&sni=..&insecure=1&mport=..#name ──
 async function importHy2Uri(uri) {
     const m = uri.match(/^(?:hysteria2|hy2):\/\/(?:([^@\/?#]*)@)?(\[[^\]]+\]|[^:\/?#,]+)(?::([\d,\-]+))?\/?(?:\?([^#]*))?(?:#(.*))?$/i);
     if (!m) { alert("Неверный формат ссылки hysteria2://"); return; }
@@ -1031,26 +1176,39 @@ async function importHy2Uri(uri) {
         const params = new URLSearchParams(m[4] || '');
         const host = m[2].replace(/^\[|\]$/g, '');
         // port: "443", multi-port "443,5000-6000" (spec) and/or ?mport=20000-50000
-        const specPorts = (m[3] || '').split(',').filter(Boolean);
-        const ranges = specPorts.concat((params.get('mport') || '').split(',').filter(Boolean));
+        const specPorts = parseHy2Ports(m[3], 'Порт');
+        const ranges = parseHy2Ports(specPorts.join(',') + ',' + (params.get('mport') || ''), 'mport');
         const hopping = ranges.some(r => r.includes('-')) || ranges.length > 1;
-        const obfs = params.get('obfs') || '';
-        if (obfs && obfs !== 'salamander') throw new Error('Обфускация "' + obfs + '" не поддерживается (только salamander)');
+        const obfs = (params.get('obfs') || '').toLowerCase();
+        if (obfs && obfs !== 'salamander' && obfs !== 'gecko') throw new Error('Обфускация "' + obfs + '" не поддерживается (salamander, gecko)');
 
         const node = {
             type: 'hysteria2',
             tag: dec(m[5] || '') || `Hy2_${host}`,
             server: host,
-            server_port: (specPorts.find(r => /^\d+$/.test(r)) || ranges[0] || '443').split('-')[0],
+            server_port: (specPorts.find(r => !r.includes('-')) || ranges[0] || '443').split('-')[0],
             password: dec(m[1] || ''),
             sni: params.get('sni') || params.get('peer') || '',
-            insecure: (params.get('insecure') === '1' || params.get('allowInsecure') === '1') ? '1' : ''
+            insecure: ['1', 'true'].some(v => params.get('insecure') === v || params.get('allowInsecure') === v) ? '1' : ''
         };
         if (hopping) node.server_ports = ranges.join(',');
-        if (obfs === 'salamander') {
-            node.obfs = 'salamander';
+        if (obfs) {
+            node.obfs = obfs;
             node.obfs_password = params.get('obfs-password') || '';
-            if (!node.obfs_password) throw new Error('Не указан obfs-password для salamander');
+            if (!node.obfs_password) throw new Error('Не указан obfs-password для ' + obfs);
+        }
+        if (obfs === 'gecko') {
+            // optional packet size window (keys as in the mihomo/hysteria URI), the core defaults to 512..1200
+            const size = k => {
+                const v = (params.get(k) || '').trim();
+                if (!v) return '';
+                if (!/^\d+$/.test(v) || +v < 1 || +v > 65535) throw new Error(k + ': ожидается целое число 1-65535');
+                return String(+v);
+            };
+            const mn = size('obfs-min-packet-size'), mx = size('obfs-max-packet-size');
+            if (mn && mx && +mn > +mx) throw new Error('obfs-min-packet-size больше obfs-max-packet-size');
+            if (mn) node.obfs_min_packet_size = mn;
+            if (mx) node.obfs_max_packet_size = mx;
         }
         if (!node.password) throw new Error('В ссылке нет пароля (auth)');
 
@@ -1063,6 +1221,11 @@ async function importHy2Uri(uri) {
     }
 }
 
+// decodeURIComponent that does not throw on a bare % (e.g. in a node name like "100% fast")
+function safeDecode(s) {
+    try { return decodeURIComponent(s.replace(/%(?![0-9a-fA-F]{2})/g, '%25')); } catch (e) { return s; }
+}
+
 // ── VLESS URI parser ──
 async function importVlessUri() {
     const uri = (prompt("Вставьте ссылку vless:// или hysteria2:// (hy2://):") || '').trim();
@@ -1073,10 +1236,11 @@ async function importVlessUri() {
     try {
         const url = new URL(uri);
         const params = new URLSearchParams(url.search);
+        const isGrpc = params.get("type") === "grpc";
 
         const node = {
             type: "vless",
-            tag: decodeURIComponent(url.hash.substring(1)) || `VLESS_${url.hostname}`,
+            tag: safeDecode(url.hash.substring(1)) || `VLESS_${url.hostname}`,
             server: url.hostname,
             server_port: url.port || "443",
             uuid: url.username,
@@ -1085,8 +1249,10 @@ async function importVlessUri() {
             pbk: params.get("pbk") || "",
             sid: params.get("sid") || "",
             transport: ["tcp", "raw"].includes(params.get("type")) ? "none" : (params.get("type") || "none"),
-            path: params.get("path") ? decodeURIComponent(params.get("path")) : "",
-            thost: params.get("host") ? decodeURIComponent(params.get("host")) : "",
+            // URLSearchParams already decodes the values; a second decodeURIComponent corrupted the path.
+            // gRPC: the compiler takes service_name from path, while in the link it is called serviceName
+            path: params.get("path") || (isGrpc ? params.get("serviceName") : "") || "",
+            thost: params.get("host") || "",
             mode: params.get("mode") || "",
             flow: params.get("flow") || ""
         };
@@ -1163,10 +1329,14 @@ async function importVlessUri() {
             <div class="form-group"><label>Пароль (auth)</label><input type="text" id="edit-hy2-password"></div>
             <div class="form-group"><label>SNI</label><input type="text" id="edit-hy2-sni"></div>
             <div class="form-group"><label>Обфускация</label>
-                <select id="edit-hy2-obfs"><option value="">нет</option><option value="salamander">salamander</option></select>
+                <select id="edit-hy2-obfs" onchange="toggleHy2ObfsFields()"><option value="">нет</option><option value="salamander">salamander</option><option value="gecko">gecko (ядро sing-box 1.14+)</option></select>
             </div>
             <div class="form-group"><label>Пароль obfs</label><input type="text" id="edit-hy2-obfspw"></div>
-            <div class="form-group"><label>Port hopping (напр. 20000-50000)</label><input type="text" id="edit-hy2-ports"></div>
+            <div id="edit-hy2-gecko-fields" style="display:none">
+                <div class="form-group"><label>Gecko: мин. размер пакета (пусто = 512)</label><input type="text" id="edit-hy2-gecko-min" inputmode="numeric"></div>
+                <div class="form-group"><label>Gecko: макс. размер пакета (пусто = 1200)</label><input type="text" id="edit-hy2-gecko-max" inputmode="numeric"></div>
+            </div>
+            <div class="form-group"><label>Port hopping (напр. 20000-50000 или 443,20000-50000)</label><input type="text" id="edit-hy2-ports"></div>
             <div class="form-group"><label><input type="checkbox" id="edit-hy2-insecure"> Не проверять сертификат (insecure)</label></div>
         </div>
         <div class="modal-footer">

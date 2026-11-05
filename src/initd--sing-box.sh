@@ -150,7 +150,7 @@ start_service() {
 
     if [ "$has_cache" -eq 0 ] && [ -x "/usr/sbin/singbox-sub-updater" ]; then
         logger -t sing-box "First run: syncing subscriptions synchronously..."
-        /usr/sbin/singbox-sub-updater || true
+        /usr/sbin/singbox-sub-updater --no-reload || true
     fi
 
     [ -x "$COMPILER" ] && "$COMPILER" || return 1
@@ -164,10 +164,8 @@ start_service() {
     if [ "$has_cache" -eq 1 ] && [ ! -f /var/run/singbox-bg-synced ] \
         && [ -x "/usr/sbin/singbox-sub-updater" ]; then
         touch /var/run/singbox-bg-synced
-        (
-            /usr/sbin/singbox-sub-updater >/dev/null 2>&1
-            /etc/init.d/sing-box reload   >/dev/null 2>&1
-        ) &
+        # The updater reloads sing-box itself, and only if the nodes changed
+        /usr/sbin/singbox-sub-updater >/dev/null 2>&1 &
     fi
 
     procd_open_instance "sing-box"

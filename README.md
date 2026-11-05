@@ -1,6 +1,6 @@
 # singA
 
-TProxy VPN-клиент для роутеров архитектуры arm64 на OpenWrt. Поддержка xhttp и amneziaWG, раздельное туннелирование, гигиена DNS, веб-интерфейс на порту `1104`.
+TProxy клиент для arm64 роутеров на OpenWrt c GUI на порту `1104`. Поддержка xhttp, aWG2, hy2. Раздельное туннелирование, гигиена DNS.
 
 ```sh
 sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install.sh)"
@@ -11,9 +11,9 @@ sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install
 ## Возможности
 
 **Протоколы**
-- AmneziaWG 2.0 - импорт файла `amnezia_config.vpn`, сгенерированного приложением AmneziaVPN, или конфига WARP .conf
-- vless + xhttp/tcp + reality - импорт по ссылке `vless://` (поддерживается основной ключ PaperVPN)
-- Hysteria2 - импорт по ссылке `hysteria2://` или `hy2://` (обфускация salamander)
+- AmneziaWG 2.0 - импорт файла `amnezia_config.vpn`, сгенерированного приложением AmneziaVPN, или конфига WARP .conf (см. [warpscout](https://github.com/vernette/warpscout))
+- vless + xhttp/tcp + reality - импорт по ссылке `vless://` (поддерживается ключ PaperVPN)
+- Hysteria2 - импорт по ссылке `hysteria2://` или `hy2://` (обфускация salamander и gecko, port hopping (диапазон задаётся как "xxx-yyy" на месте порта)
 
 **Маршрутизация**
 - 3 режима: 1) всё в proxy; 2) всё в proxy, кроме РФ-доменов; 3) обход РКН (дефолт) - в proxy только заблокированное/замедленное в РФ + исключения
@@ -31,6 +31,7 @@ sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install
 **Логи, автовыбор узла**
 - Просмотр 100 последних строк лога sing-box в UI (кнопка «Лог», обновление по кнопке)
 - При двух и более активных узлах - автовыбор самого быстрого
+- Автообновление подписок по расписанию
 
 ---
 
@@ -86,7 +87,7 @@ sh /usr/sbin/singbox-uninstall        # удаление (--purge для уда�
 | `lib--singbox-validate.lua` | `/usr/lib/singbox/validate.lua` | общий модуль валидации UCI-полей - используется `rpcd` и `compiler` |
 | `sbin--singbox-sub-updater.sh` | `/usr/sbin/singbox-sub-updater` | загрузчик подписок: скачивает VLESS/AWG по URL из UCI, парсит в узлы, кэширует JSON в tmpfs |
 | `etc-singbox--update-rules.sh` | `/etc/sing-box/update-rules.sh` | обновление баз: скачивает .srs, перезапускает sing-box; расписание задаётся через cron_schedule |
-| `www--singbox.html` | `/www/singbox/singbox.html` | одностраничный UI (порт 1104): авторизация через ubus session.login, управление узлами/правилами/подписками |
+| `www--singbox.html` | `/www/singbox/singbox.html` | одностраничный UI (порт 1104): авторизация через ubus session.login, управление параметрами/узлами/подписками |
 | `singbox-logtail` (генерируется в `install.sh`) | `/usr/sbin/singbox-logtail` | отдельный procd-инстанс поверх `logread -f -e sing-box`; кольцевой буфер последних 100 строк в `/var/run/sing-box_log.txt` |
 
 </details>
@@ -140,8 +141,9 @@ sh /usr/sbin/singbox-uninstall        # удаление (--purge для уда�
 
 <details>
 
-<summary>Ссылка на скриншот веб-интерфейса версии 0.10.7</summary>
+<summary>Ссылки на скриншоты веб-интерфейса версии 0.10.8</summary>
 
-https://drive.google.com/file/d/1uyUW1D9q9EvJnRb8fkQwGKtnox2F6tOT/view?usp=drive_link
+https://drive.google.com/file/d/1-1ohv66TSG4ZrBaHvVojtDUStzd3rie9/view?usp=sharing
+https://drive.google.com/file/d/1bs_bkvl0kPsenIhqWbNXgidTj6YlVaV1/view?usp=sharing
 
 </details>

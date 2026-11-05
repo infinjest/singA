@@ -101,6 +101,122 @@ function M.ip_cidr_list(v)
     return true
 end
 
+-- Single TCP/UDP port: "443". On error: false, message.
+function M.port(v)
+    local s = tostring(v or "")
+    if not s:match("^%d+$") then return false, '"' .. s .. '" не похоже на порт' end
+    local p = tonumber(s)
+    if p < 1 or p > 65535 then return false, "порт " .. s .. " вне диапазона 1-65535" end
+    return true
+end
+
+-- Hysteria2 port list / port hopping: "443", "20000-50000", "443,5000-6000".
+-- "from:to" (sing-box notation) is accepted as well as "from-to".
+function M.port_list(v)
+    if v == nil or v == "" then return true end
+    local n = 0
+    for item in tostring(v):gmatch("[^,%s]+") do
+        n = n + 1
+        local a, b = item:match("^(%d+)[%-:](%d+)$")
+        if not a then a = item:match("^(%d+)$") end
+        if not a then
+            return false, '"' .. item .. '" не похоже на порт или диапазон (пример: 443,20000-50000)'
+        end
+        a = tonumber(a); b = b and tonumber(b) or a
+        if a < 1 or a > 65535 or b < 1 or b > 65535 then
+            return false, 'порт в "' .. item .. '" вне диапазона 1-65535'
+        end
+        if a > b then return false, 'в диапазоне "' .. item .. '" начало больше конца' end
+    end
+    if n == 0 then return false, "пустой список портов" end
+    return true
+end
+
+-- Hysteria2 obfuscation type: "" (off), "salamander" or "gecko".
+function M.hy2_obfs(v)
+    if v == nil or v == "" or v == "salamander" or v == "gecko" then return true end
+    return false, 'неизвестный тип обфускации "' .. tostring(v) .. '" (salamander/gecko)'
+end
+
+-- Gecko min/max on-wire packet size (either may be empty = core default).
+function M.gecko_sizes(minv, maxv)
+    local function one(v, name)
+        if v == nil or v == "" then return true end
+        local s = tostring(v)
+        local n = s:match("^%d+$") and tonumber(s)
+        if not n or n < 1 or n > 65535 then
+            return false, name .. ": ожидается целое число 1-65535"
+        end
+        return true
+    end
+    local ok, err = one(minv, "мин. размер пакета")
+    if not ok then return false, err end
+    ok, err = one(maxv, "макс. размер пакета")
+    if not ok then return false, err end
+    if minv and minv ~= "" and maxv and maxv ~= "" and tonumber(minv) > tonumber(maxv) then
+        return false, "мин. размер пакета больше максимального"
+    end
+    return true
+end
+
+-- Node server address (NOT a DNS address): IPv4, IPv6 (bare or in [ ]) or a hostname.
+-- ASCII only, punycode (xn--…) is fine; no scheme, no port.
+function M.node_host(v)
+    local s = tostring(v or "")
+    if s == "" then return false, "не указан адрес сервера" end
+    if s:find("://", 1, true) then return false, 'адрес сервера указывается без схемы ("' .. s .. '")' end
+    local inner = s:match("^%[([^%]]+)%]$")
+    if inner or s:find(":", 1, true) then
+        if is_ipv6(inner or s) then return true end
+        if s:match("^[^:/%[%]]+:%d+$") then return false, "порт указывается в отдельном поле, а не в адресе" end
+        return false, '"' .. s .. '" не похоже на IPv6-адрес'
+    end
+    if s:match("^[%d%.]+$") then
+        if is_ipv4(s) then return true end
+        return false, '"' .. s .. '" не похоже на IPv4-адрес'
+    end
+    local host = s:gsub("%.$", "")
+    if host == "" or #host > 253 then return false, '"' .. s .. '" не похоже на домен' end
+    for label in (host .. "."):gmatch("([^%.]*)%.") do
+        if #label == 0 or #label > 63 or not label:match("^[%w_%-]+$") or label:match("^%-") or label:match("%-$") then
+            local hint = s:find("[\128-\255]") and " (для IDN используйте punycode, xn--…)" or ""
+            return false, '"' .. s .. '" не похоже на IP или домен' .. hint
+        end
+    end
+    return true
+end
+
+-- WireGuard/AmneziaWG key: base64 of 32 bytes = 43 chars + "=".
+function M.wg_key(v)
+    local s = tostring(v or "")
+    if #s == 44 and s:match("^[A-Za-z0-9+/]+=$") then return true end
+    return false, "ключ должен быть в base64, 44 символа (оканчивается на =)"
+end
+
+-- Non-negative integer in [min, max]; empty = not set.
+function M.uint(v, min, max)
+    if v == nil or v == "" then return true end
+    local s = tostring(v)
+    local n = s:match("^%d+$") and tonumber(s)
+    if not n or n < (min or 0) or n > (max or 4294967295) then
+        return false, "ожидается целое число " .. (min or 0) .. "-" .. (max or 4294967295)
+    end
+    return true
+end
+
+-- AmneziaWG 2.0 magic header: number or "from-to" range; empty = not set.
+function M.awg_h(v)
+    if v == nil or v == "" then return true end
+    local s = tostring(v)
+    local a, b = s:match("^(%d+)%-(%d+)$")
+    if not a then a = s:match("^(%d+)$") end
+    if not a then return false, 'ожидается число или диапазон "от-до"' end
+    a = tonumber(a); b = b and tonumber(b) or a
+    if a > 4294967295 or b > 4294967295 then return false, "значение больше 4294967295" end
+    if a > b then return false, "начало диапазона больше конца" end
+    return true
+end
+
 function M.cron(v)
     if not v or v == "disable" then return true end
     local fields = {}

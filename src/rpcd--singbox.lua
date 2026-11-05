@@ -10,7 +10,7 @@ local method = arg[1]
 local action = arg[2]
 
 if method == "list" then
-    print('{"status":{},"get_config":{},"add_node":{"node":"table"},"del_node":{"section":"string"},"edit_node":{"section":"string","node":"table"},"set_settings":{"settings":"table"},"add_rule":{"rule":"table"},"del_rule":{"section":"string"},"add_dns_rule":{"rule":"table"},"del_dns_rule":{"section":"string"},"set_sub_cron":{"schedule":"string"},"add_host":{"host":"table"},"del_host":{"section":"string"},"add_subscription":{"label":"string","url":"string"},"update_sub":{"section":"string"},"apply":{},"check_connectivity":{},"get_running_config":{},"get_log":{},"get_active_node":{}}')
+    print('{"status":{},"get_config":{},"add_node":{"node":"table"},"del_node":{"section":"string"},"edit_node":{"section":"string","node":"table"},"set_settings":{"settings":"table"},"add_rule":{"rule":"table"},"del_rule":{"section":"string"},"add_dns_rule":{"rule":"table"},"del_dns_rule":{"section":"string"},"set_sub_cron":{"schedule":"string"},"toggle_sub_node":{"subscription":"string","tag":"string","enabled":"string"},"add_host":{"host":"table"},"del_host":{"section":"string"},"add_subscription":{"label":"string","url":"string"},"update_sub":{"section":"string"},"apply":{},"check_connectivity":{},"get_running_config":{},"get_log":{},"get_active_node":{}}')
     os.exit(0)
 end
 
@@ -22,6 +22,119 @@ local req   = (input and input ~= "") and json.parse(input) or {}
 local function respond(data)
     print(json.stringify(data))
     os.exit(0)
+end
+
+-- Hysteria2 node fields (port hopping, obfuscation). partial=true (edit_node):
+-- only the fields actually present in `node` are checked, the rest stay as in UCI.
+local function check_hy2_fields(node, partial)
+    local function present(k) return node[k] ~= nil end
+    local ok, err
+    if present("server_port") and tostring(node.server_port) ~= "" then
+        ok, err = validate.port(node.server_port)
+        if not ok then return false, "Порт: " .. err end
+    end
+    if present("server_ports") then
+        ok, err = validate.port_list(node.server_ports)
+        if not ok then return false, "Port hopping: " .. err end
+    end
+    if present("obfs") then
+        ok, err = validate.hy2_obfs(node.obfs)
+        if not ok then return false, err end
+    end
+    local obfs = node.obfs
+    if obfs and obfs ~= "" then
+        local pw_missing = (not partial and (node.obfs_password == nil or node.obfs_password == ""))
+            or (present("obfs_password") and node.obfs_password == "")
+        if pw_missing then return false, "Не указан пароль obfs для " .. tostring(obfs) end
+    end
+    ok, err = validate.gecko_sizes(node.obfs_min_packet_size, node.obfs_max_packet_size)
+    if not ok then return false, "Gecko: " .. err end
+    return true
+end
+
+-- Value of a node field: from the request, else (edit_node) the one already in UCI.
+local function eff(node, section, k)
+    if node[k] ~= nil then return tostring(node[k]) end
+    if section then return uci:get("singbox", section, k) or "" end
+    return ""
+end
+
+local NODE_TYPES = { vless = true, hysteria2 = true, amneziawg = true, wireguard = true }
+local VLESS_SECURITY  = { [""] = true, none = true, tls = true, reality = true }
+local VLESS_TRANSPORT = { [""] = true, none = true, tcp = true, raw = true, ws = true, http = true,
+                          httpupgrade = true, grpc = true, xhttp = true }
+local VLESS_FLOW = { [""] = true, ["xtls-rprx-vision"] = true, ["xtls-rprx-vision-udp443"] = true }
+
+-- Checks for every node type. section=nil → add_node (all required fields must be present),
+-- otherwise edit_node. A value that sing-box rejects at `sing-box check` would block rebuilding
+-- the whole config, so it is better refused here, with a readable message.
+local function check_node_fields(node, section)
+    local ntype = section and uci:get("singbox", section, "type") or node.type
+    if not NODE_TYPES[ntype] then return false, "Неизвестный тип узла: " .. tostring(ntype) end
+    local ok, err
+
+    if node.server ~= nil or not section then
+        ok, err = validate.node_host(node.server)
+        if not ok then return false, "Сервер: " .. err end
+    end
+    if node.server_port ~= nil and tostring(node.server_port) ~= "" then
+        ok, err = validate.port(node.server_port)
+        if not ok then return false, "Порт: " .. err end
+    end
+
+    if ntype == "vless" then
+        if eff(node, section, "uuid") == "" then return false, "Не указан UUID" end
+        local sec = eff(node, section, "security")
+        if not VLESS_SECURITY[sec] then return false, 'Неизвестный security "' .. sec .. '" (none, tls, reality)' end
+        if sec == "reality" and eff(node, section, "pbk") == "" then
+            return false, "Для reality нужен публичный ключ (pbk)"
+        end
+        local tr = eff(node, section, "transport")
+        if not VLESS_TRANSPORT[tr] then
+            return false, 'Транспорт "' .. tr .. '" не поддерживается (tcp, ws, grpc, xhttp, http, httpupgrade)'
+        end
+        local fl = eff(node, section, "flow")
+        if not VLESS_FLOW[fl] then return false, 'Неизвестный flow "' .. fl .. '"' end
+    elseif ntype == "amneziawg" or ntype == "wireguard" then
+        local function key(k, label, required)
+            local v = eff(node, section, k)
+            if v == "" then
+                if required then return false, "Не указан " .. label end
+                return true
+            end
+            local kok, kerr = validate.wg_key(v)
+            if not kok then return false, label .. ": " .. kerr end
+            return true
+        end
+        ok, err = key("private_key", "приватный ключ", true);        if not ok then return false, err end
+        ok, err = key("peer_public_key", "публичный ключ сервера", true); if not ok then return false, err end
+        ok, err = key("pre_shared_key", "pre-shared key", false);    if not ok then return false, err end
+        ok, err = validate.ip_cidr_list(eff(node, section, "local_address"))
+        if not ok then return false, "Локальный адрес: " .. err end
+        ok, err = validate.uint(eff(node, section, "mtu"), 576, 65535)
+        if not ok then return false, "MTU: " .. err end
+        for _, k in ipairs({ "jc", "jmin", "jmax", "s1", "s2", "s3", "s4" }) do
+            ok, err = validate.uint(eff(node, section, k))
+            if not ok then return false, k:upper() .. ": " .. err end
+        end
+        for _, k in ipairs({ "h1", "h2", "h3", "h4" }) do
+            ok, err = validate.awg_h(eff(node, section, k))
+            if not ok then return false, k:upper() .. ": " .. err end
+        end
+    end
+    return true
+end
+
+-- Subscription nodes the user switched off: "<subscription>|<tag>" entries in the UCI list main.sub_disabled
+local function sub_off_set()
+    local raw = uci:get("singbox", "main", "sub_disabled")
+    local set = {}
+    if type(raw) == "table" then
+        for _, v in ipairs(raw) do set[v] = true end
+    elseif type(raw) == "string" and raw ~= "" then
+        set[raw] = true
+    end
+    return set
 end
 
 if action == "status" then
@@ -57,7 +170,18 @@ if action == "status" then
         local mf = io.popen("date -r '" .. db_file .. "' +%s 2>/dev/null")
         if mf then db_mtime = (mf:read("*l") or ""):gsub("%s+$", ""); mf:close() end
     end
-    respond({ running = running, sub_updating = sub_updating, sb_version = sb_ver, db_mtime = db_mtime, db_label = db_label })
+    -- outcome of the last subscription update (written by singbox-sub-updater when it finishes)
+    local sub_result
+    local rf = io.open("/var/run/singbox-sub.result", "r")
+    if rf then
+        sub_result = {}
+        for line in rf:lines() do
+            local k, v = line:match("^(%w+)=(%d+)$")
+            if k then sub_result[k] = tonumber(v) end
+        end
+        rf:close()
+    end
+    respond({ running = running, sub_updating = sub_updating, sub_result = sub_result, sb_version = sb_ver, db_mtime = db_mtime, db_label = db_label })
 
 elseif action == "get_config" then
     local cfg = { main = {}, nodes = {}, custom_rules = {}, dns_rules = {}, hosts = {}, subscriptions = {}, sub_nodes = {} }
@@ -66,20 +190,25 @@ elseif action == "get_config" then
     uci:foreach("singbox", "custom_rule",  function(s) cfg.custom_rules[s[".name"]] = s end)
     uci:foreach("singbox", "dns_rule",     function(s) cfg.dns_rules[s[".name"]] = s end)
     uci:foreach("singbox", "hosts_entry",  function(s) cfg.hosts[s[".name"]] = s end)
+    local sub_off = sub_off_set()
     uci:foreach("singbox", "subscription", function(sub)
         local sec = sub[".name"]
         cfg.subscriptions[sec] = sub
-        local content
+        local content, used_path
         for _, path in ipairs({ "/var/run/singbox_sub_" .. sec .. ".json", SUB_CACHE_DIR .. "/" .. sec .. ".json" }) do
             local f = io.open(path, "r")
-            if f then content = f:read("*a"); f:close(); break end
+            if f then content = f:read("*a"); used_path = path; f:close(); break end
         end
         if not content then return end
+        -- last update time = mtime of the cache file (the updater rewrites the tmpfs copy on every successful run)
+        local mf = io.popen("date -r '" .. used_path .. "' +%s 2>/dev/null")
+        if mf then sub._updated = tonumber((mf:read("*l") or ""):match("%d+")); mf:close() end
         local nodes = json.parse(content)
         if type(nodes) ~= "table" then return end
         for _, n in ipairs(nodes) do
             n._subscription = sec
             n._sub_label    = sub.label or sec
+            if sub_off[sec .. "|" .. tostring(n.tag or "")] then n._sub_off = "1" end
             table.insert(cfg.sub_nodes, n)
         end
     end)
@@ -185,6 +314,13 @@ elseif action == "del_node" then
         -- nothing further to hunt down in UCI here.
         os.remove("/var/run/singbox_sub_" .. req.section .. ".json")
         os.remove(SUB_CACHE_DIR .. "/" .. req.section .. ".json")
+        -- forget the "switched off" marks of this subscription's nodes
+        local keep, prefix = {}, req.section .. "|"
+        for k in pairs(sub_off_set()) do
+            if k:sub(1, #prefix) ~= prefix then table.insert(keep, k) end
+        end
+        table.sort(keep)
+        if #keep > 0 then uci:set("singbox", "main", "sub_disabled", keep) else uci:delete("singbox", "main", "sub_disabled") end
     end
     uci:delete("singbox", req.section)
     uci:save("singbox")
@@ -197,12 +333,17 @@ elseif action == "add_node" then
         private_key=true, peer_public_key=true, local_address=true, jc=true, jmin=true, jmax=true, s1=true, s2=true,
         s3=true, s4=true, pre_shared_key=true, h1=true, h2=true, h3=true, h4=true,
         i1=true, i2=true, i3=true, i4=true, i5=true, mtu=true,
-        password=true, obfs=true, obfs_password=true, insecure=true, server_ports=true,
+        password=true, obfs=true, obfs_password=true, obfs_min_packet_size=true, obfs_max_packet_size=true,
+        insecure=true, server_ports=true,
         transport=true, path=true, thost=true, mode=true, flow=true, enabled=true
     }
-    if req.node.server then
-        local ok, err = validate.dns_addr(req.node.server)
-        if not ok then respond({ error = "Сервер: " .. err }) end
+    do
+        local ok, err = check_node_fields(req.node, nil)
+        if not ok then respond({ error = err }) end
+    end
+    if req.node.type == "hysteria2" then
+        local ok, err = check_hy2_fields(req.node, false)
+        if not ok then respond({ error = err }) end
     end
     local sname = uci:add("singbox", "node")
     for k, v in pairs(req.node) do
@@ -219,16 +360,21 @@ elseif action == "edit_node" then
     local sec_type = uci:get("singbox", req.section)
     if sec_type ~= "node" then respond({ error = "Invalid section type" }) end
     if type(req.node) ~= "table" then respond({ error = "Invalid node data" }) end
-    if req.node.server and req.node.server ~= "" then
-        local ok, err = validate.dns_addr(req.node.server)
-        if not ok then respond({ error = "Сервер: " .. err }) end
+    do
+        local ok, err = check_node_fields(req.node, req.section)
+        if not ok then respond({ error = err }) end
+    end
+    if uci:get("singbox", req.section, "type") == "hysteria2" then
+        local ok, err = check_hy2_fields(req.node, true)
+        if not ok then respond({ error = err }) end
     end
     local allowed = {
         tag=true, server=true, server_port=true, uuid=true, security=true, sni=true, pbk=true, sid=true,
         private_key=true, peer_public_key=true, local_address=true, jc=true, jmin=true, jmax=true, s1=true, s2=true,
         s3=true, s4=true, pre_shared_key=true, h1=true, h2=true, h3=true, h4=true,
         i1=true, i2=true, i3=true, i4=true, i5=true, mtu=true,
-        password=true, obfs=true, obfs_password=true, insecure=true, server_ports=true,
+        password=true, obfs=true, obfs_password=true, obfs_min_packet_size=true, obfs_max_packet_size=true,
+        insecure=true, server_ports=true,
         transport=true, path=true, thost=true, mode=true, flow=true, enabled=true
     }
     for k, v in pairs(req.node) do
@@ -327,9 +473,8 @@ elseif action == "set_sub_cron" then
         cf:close()
     end
     if sched ~= "disable" then
-        -- reload only when the service is enabled: the new cache must be recompiled into the running config
-        table.insert(kept, sched .. " /usr/sbin/singbox-sub-updater >/dev/null 2>&1;"
-            .. " [ \"$(uci -q get singbox.main.enabled)\" = 1 ] && /etc/init.d/sing-box reload >/dev/null 2>&1")
+        -- the updater reloads sing-box itself when the nodes changed (and the service is enabled)
+        table.insert(kept, sched .. " /usr/sbin/singbox-sub-updater >/dev/null 2>&1")
     end
     local wf = io.open("/etc/crontabs/root.tmp", "w")
     if not wf then respond({ error = "Не удалось записать crontab" }) end
@@ -442,8 +587,27 @@ elseif action == "update_sub" then
         local safe_sec = tostring(req.section):gsub("[^%w_%-]", "")
         if safe_sec ~= "" then sec = " " .. safe_sec end
     end
+    os.remove("/var/run/singbox-sub.result")  -- so the UI never shows the outcome of a previous run
     os.execute("/usr/sbin/singbox-sub-updater" .. sec .. " </dev/null >/dev/null 2>&1 &")
     respond({ status = "processing" })
+
+elseif action == "toggle_sub_node" then
+    -- Subscription nodes have no UCI section (they are re-created from the cache on every update),
+    -- so "off" is remembered as "<subscription>|<tag>" in the main.sub_disabled list; the compiler skips them.
+    local sec = (tostring(req.subscription or ""):gsub("[^%w_%-]", ""))
+    local tag = tostring(req.tag or "")
+    if sec == "" or tag == "" or uci:get("singbox", sec) ~= "subscription" then
+        respond({ error = "Subscription or node not found" })
+    end
+    local key, list = sec .. "|" .. tag, {}
+    for k in pairs(sub_off_set()) do
+        if k ~= key then table.insert(list, k) end
+    end
+    if tostring(req.enabled) == "0" then table.insert(list, key) end
+    table.sort(list)
+    if #list > 0 then uci:set("singbox", "main", "sub_disabled", list) else uci:delete("singbox", "main", "sub_disabled") end
+    uci:save("singbox")
+    respond({ status = "ok" })
 
 elseif action == "apply" then
     uci:commit("singbox")
