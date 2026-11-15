@@ -4,6 +4,22 @@
 
 ---
 
+## [0.10.9] — 2026-11-14
+
+### Added
+
+- **AmneziaWG 3.0 / 3.1.** Нужно ядро sing-box-lx **1.14.0-lx.32 или новее** (установщик берёт последнее). Новые поля узла (все — в корне wireguard-endpoint, как `jc`/`s1`/`h1`): `header_protection_key` (шифрование заголовков; сервер должен иметь тот же ключ), `content_padding_addition`, `random_trailers`, `disable_cookies`, тайминги `rekey_after_time` / `rekey_timeout` / `reject_after_time` / `keepalive_timeout` / `max_handshake_attempts` (число или диапазон «от-до»), а также `persistent_keepalive` (число или диапазон; уходит в `peers[0].persistent_keepalive_interval`).
+  - `www--singbox.html`: импорт из `.conf` (`HeaderProtectionKey`, `ContentPaddingAddition`, `Rekey*`, `RejectAfterTime`, `KeepaliveTimeout`, `MaxHandshakeAttempts`, `RandomTrailers`, `DisableCookies`, `PersistentKeepalive`), экспорт обратно в `.conf`, поля в окне редактирования узла; узлы с 3.x-полями в таблице помечены `amneziaWG3`.
+  - `www--singbox.html`: импорт `.vpn` читает полный текст клиентского `.conf` из `last_config.config` (если он есть) — оттуда берутся `S3`/`S4`, `I1`–`I5`, `MTU` и поля 3.x, которых нет в плоском объекте `awg`. У экспортов без этого текста поведение прежнее.
+  - `rpcd`: поля 3.x в whitelist `add_node`/`edit_node` и проверки: ключ — base64 по 44 символа и не нулевой (ядро считает нулевой ключ «выключено»); при заданном ключе каждый из `S1`–`S4` должен быть не меньше 12 (заголовок шифруется с nonce из паддинга); значения — число или диапазон «от-до» (начало не больше конца), keepalive не больше 65535. Проверка учитывает значения, уже лежащие в UCI, если `edit_node` их не передал.
+  - `compiler`: поля 3.x пишутся в endpoint (число остаётся числом, диапазон — строкой, флаги — `true`). Если ядро старше 1.14.0-lx.32, поля 3.x отбрасываются с предупреждением в `logread`: иначе `sing-box check` отклонил бы конфиг, и пока такой узел есть, не пересобиралось бы ничего. Некорректные значения (UCI правили вручную) отбрасываются так же, остальные поля остаются. Версия ядра читается один раз, её же использует проверка gecko.
+  - `sub-updater`: ссылки `amneziawg://` понимают параметры `s3`, `s4`, `mtu`, `presharedkey`, `headerprotectionkey`, `contentpaddingaddition`, `rekeyaftertime`, `rekeytimeout`, `rejectaftertime`, `keepalivetimeout`, `maxhandshakeattempts`, `randomtrailers`, `disablecookies`, `persistentkeepalive` (значения передаются как есть, без url-decode: `+` в base64-ключе не должен стать пробелом). У ссылок без этих параметров кэш узлов не меняется ни на байт, поэтому лишних перезапусков после обновления не будет.
+  - `compiler-test.sh`: третий временный узел — AmneziaWG 3.1 со всеми полями; на ядре 1.14.0-lx.32+ это проверка, что `sing-box check` принимает поля в том виде, как их пишет компилятор.
+
+### Changed
+
+- `www--singbox.html`: разбор строк `.conf` вынесен в `parseIniKeys` (поведение прежнее, он же используется для `.vpn`).
+
 ## [0.10.8] — 2026-11-06
 
 ### Added

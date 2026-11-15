@@ -53,6 +53,16 @@ function url_decode(str,    res, i, c, hex) {
     }
     return res
 }
+BEGIN {
+    # amneziawg:// query params beyond the basic set above → node field names. Values go
+    # through verbatim (base64 keys must not be url-decoded: "+" would become a space)
+    xn = split("s3:s3 s4:s4 mtu:mtu presharedkey:pre_shared_key headerprotectionkey:header_protection_key " \
+               "contentpaddingaddition:content_padding_addition rekeyaftertime:rekey_after_time " \
+               "rekeytimeout:rekey_timeout rejectaftertime:reject_after_time keepalivetimeout:keepalive_timeout " \
+               "maxhandshakeattempts:max_handshake_attempts randomtrailers:random_trailers " \
+               "disablecookies:disable_cookies persistentkeepalive:persistent_keepalive", xpairs, " ")
+    for (xi = 1; xi <= xn; xi++) { split(xpairs[xi], xp, ":"); AWG_X[xp[1]] = xp[2] }
+}
 {
     sub(/\r$/, "", $0)
     if (!match($0, /^(vless|amneziawg|wireguard):\/\//)) next
@@ -97,6 +107,7 @@ function url_decode(str,    res, i, c, hex) {
     awg_jmin = "0"; awg_jmax = "0"
     awg_s1 = "0"; awg_s2 = "0"
     awg_h1 = "0"; awg_h2 = "0"; awg_h3 = "0"; awg_h4 = "0"
+    awg_extra = ""
 
     if (query != "") {
         n = split(query, params, "&")
@@ -127,6 +138,11 @@ function url_decode(str,    res, i, c, hex) {
             if (kv[1] == "h2")        awg_h2     = kv[2]
             if (kv[1] == "h3")        awg_h3     = kv[2]
             if (kv[1] == "h4")        awg_h4     = kv[2]
+            if (type == "amneziawg" && (kv[1] in AWG_X) && kv[2] != "") {
+                xv = kv[2]
+                gsub(/["\\]/, "\\\\&", xv)
+                awg_extra = awg_extra ",\"" AWG_X[kv[1]] "\":\"" xv "\""
+            }
         }
     }
 
@@ -184,6 +200,7 @@ function url_decode(str,    res, i, c, hex) {
     print "h2="   awg_h2
     print "h3="   awg_h3
     print "h4="   awg_h4
+    print "awg_extra=" awg_extra
     print "END_NODE"
 }
 EOF
@@ -218,6 +235,7 @@ build_nodes_json() {
                 n_trn="none"; n_path=""; n_thost=""; n_mode=""; n_flow=""
                 n_pub=""; n_addr=""; n_jm="0"; n_jx="0"
                 n_jc="0"; n_s1="0"; n_s2="0"; n_h1="0"; n_h2="0"; n_h3="0"; n_h4="0"
+                n_ex=""
                 ;;
             type=*)            n_t="${line#*=}"    ;;
             tag=*)             n_tag="${line#*=}"  ;;
@@ -244,11 +262,12 @@ build_nodes_json() {
             h2=*)              n_h2="${line#*=}"   ;;
             h3=*)              n_h3="${line#*=}"   ;;
             h4=*)              n_h4="${line#*=}"   ;;
+            awg_extra=*)       n_ex="${line#*=}"   ;;
             END_NODE)
                 if [ -n "$n_tag" ] && [ -n "$n_srv" ]; then
                     [ "$first" -eq 0 ] && json_out="${json_out},"
                     if [ "$n_t" = "amneziawg" ]; then
-                        json_out="${json_out}{\"type\":\"${n_t}\",\"tag\":\"${n_tag}\",\"server\":\"${n_srv}\",\"server_port\":\"${n_port}\",\"uuid\":\"${n_id}\",\"security\":\"${n_sec}\",\"sni\":\"${n_sni}\",\"pbk\":\"${n_pbk}\",\"sid\":\"${n_sid}\",\"transport\":\"${n_trn}\",\"path\":\"${n_path}\",\"thost\":\"${n_thost}\",\"mode\":\"${n_mode}\",\"peer_public_key\":\"${n_pub}\",\"local_address\":\"${n_addr}\",\"jc\":\"${n_jc}\",\"jmin\":\"${n_jm}\",\"jmax\":\"${n_jx}\",\"s1\":\"${n_s1}\",\"s2\":\"${n_s2}\",\"h1\":\"${n_h1}\",\"h2\":\"${n_h2}\",\"h3\":\"${n_h3}\",\"h4\":\"${n_h4}\"}"
+                        json_out="${json_out}{\"type\":\"${n_t}\",\"tag\":\"${n_tag}\",\"server\":\"${n_srv}\",\"server_port\":\"${n_port}\",\"uuid\":\"${n_id}\",\"security\":\"${n_sec}\",\"sni\":\"${n_sni}\",\"pbk\":\"${n_pbk}\",\"sid\":\"${n_sid}\",\"transport\":\"${n_trn}\",\"path\":\"${n_path}\",\"thost\":\"${n_thost}\",\"mode\":\"${n_mode}\",\"peer_public_key\":\"${n_pub}\",\"local_address\":\"${n_addr}\",\"jc\":\"${n_jc}\",\"jmin\":\"${n_jm}\",\"jmax\":\"${n_jx}\",\"s1\":\"${n_s1}\",\"s2\":\"${n_s2}\",\"h1\":\"${n_h1}\",\"h2\":\"${n_h2}\",\"h3\":\"${n_h3}\",\"h4\":\"${n_h4}\"${n_ex}}"
                     else
                         json_out="${json_out}{\"type\":\"${n_t}\",\"tag\":\"${n_tag}\",\"server\":\"${n_srv}\",\"server_port\":\"${n_port}\",\"uuid\":\"${n_id}\",\"security\":\"${n_sec}\",\"sni\":\"${n_sni}\",\"pbk\":\"${n_pbk}\",\"sid\":\"${n_sid}\",\"transport\":\"${n_trn}\",\"path\":\"${n_path}\",\"thost\":\"${n_thost}\",\"mode\":\"${n_mode}\",\"flow\":\"${n_flow}\",\"peer_public_key\":\"${n_pub}\",\"local_address\":\"${n_addr}\"}"
                     fi

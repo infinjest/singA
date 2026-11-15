@@ -155,21 +155,52 @@ local function log_warn(msg)
     msg = tostring(msg):gsub("[^%w _%.:,%-]", "?")
     os.execute("logger -t singbox-compiler \"WARN: " .. msg .. "\"")
 end
+local core_ver_line
+local function core_version_line()
+    if core_ver_line == nil then
+        core_ver_line = ""
+        local p = io.popen("/usr/bin/sing-box version 2>/dev/null | head -n1")
+        if p then
+            core_ver_line = p:read("*l") or ""
+            p:close()
+        end
+    end
+    return core_ver_line
+end
+
 local core_has_gecko
 local function gecko_supported()
     if core_has_gecko == nil then
         core_has_gecko = true
-        local p = io.popen("/usr/bin/sing-box version 2>/dev/null | head -n1")
-        if p then
-            local line = p:read("*l") or ""
-            p:close()
-            local maj, min = line:match("(%d+)%.(%d+)%.%d+")
-            if maj and (tonumber(maj) < 1 or (tonumber(maj) == 1 and tonumber(min) < 14)) then
-                core_has_gecko = false
-            end
+        local maj, min = core_version_line():match("(%d+)%.(%d+)%.%d+")
+        if maj and (tonumber(maj) < 1 or (tonumber(maj) == 1 and tonumber(min) < 14)) then
+            core_has_gecko = false
         end
     end
     return core_has_gecko
+end
+
+-- AmneziaWG 3.x (header protection, padding, trailers, timings) arrived in
+-- sing-box-lx 1.14.0-lx.32. On an older core `sing-box check` rejects the unknown
+-- fields, and the pre-flight below would then refuse every config rebuild while a
+-- 3.x node exists, so these fields are dropped (with a warning) instead. Version
+-- strings look like "sing-box version 1.14.0-lx.35"; one that does not parse is not
+-- treated as a problem, `sing-box check` has the last word.
+local core_has_awg3
+local function awg3_supported()
+    if core_has_awg3 == nil then
+        core_has_awg3 = true
+        local a, b, c, lx = core_version_line():match("(%d+)%.(%d+)%.(%d+)%-lx%.(%d+)")
+        if a then
+            a, b, c, lx = tonumber(a), tonumber(b), tonumber(c), tonumber(lx)
+            -- lexicographic: (major, minor, patch, lx build) >= (1, 14, 0, 32)
+            if a ~= 1 then core_has_awg3 = a > 1
+            elseif b ~= 14 then core_has_awg3 = b > 14
+            elseif c ~= 0 then core_has_awg3 = c > 0
+            else core_has_awg3 = lx >= 32 end
+        end
+    end
+    return core_has_awg3
 end
 
 -- "[2001:db8::1]" → "2001:db8::1": rpcd accepts both forms, sing-box wants the bare address
@@ -362,6 +393,59 @@ local function build_endpoint(s, tag)
         e.i5   = pick_str(s.i5)
         if s.pre_shared_key and s.pre_shared_key ~= "" then
             e.peers[1].pre_shared_key = s.pre_shared_key
+        end
+
+        -- AmneziaWG 3.0/3.1. Everything sits on the endpoint root next to jc/s1/h1,
+        -- except the keepalive, which belongs to the peer. UCI/subscription values are
+        -- strings: "120" is passed as the number 120, "100-120" stays a range string.
+        local AWG3_KEYS = { "header_protection_key", "content_padding_addition", "random_trailers",
+                            "disable_cookies", "rekey_after_time", "rekey_timeout", "reject_after_time",
+                            "keepalive_timeout", "max_handshake_attempts", "persistent_keepalive" }
+        local wants_awg3 = false
+        for _, k in ipairs(AWG3_KEYS) do
+            if pick_str(s[k]) then wants_awg3 = true end
+        end
+        if wants_awg3 and not awg3_supported() then
+            log_warn("node uses AmneziaWG 3.x fields, they need sing-box-lx 1.14.0-lx.32 or newer; fields ignored")
+        elseif wants_awg3 then
+            local function range_val(key, v, max)
+                v = pick_str(v)
+                if not v then return nil end
+                if not validate.awg_h(v, max) then
+                    log_warn("invalid AmneziaWG 3.x value ignored: " .. key)
+                    return nil
+                end
+                if v:match("^%d+$") then return tonumber(v) end
+                return v
+            end
+            local function flag(v)
+                v = tostring(v or ""):lower()
+                return v == "1" or v == "on" or v == "true" or v == "yes"
+            end
+
+            -- header protection derives its cipher nonce from the junk padding, so the
+            -- core demands s1..s4 >= 12; defense-in-depth like the hy2 port list above
+            local hpk = pick_str(s.header_protection_key)
+            if hpk then
+                local hok = validate.awg_hpk(hpk)
+                for _, v in ipairs({ e.s1, e.s2, e.s3, e.s4 }) do
+                    if v < 12 then hok = false end
+                end
+                if hok then
+                    e.header_protection_key = hpk
+                else
+                    log_warn("invalid header_protection_key or s1-s4 below 12, key ignored")
+                end
+            end
+            e.content_padding_addition = range_val("content_padding_addition", s.content_padding_addition)
+            e.rekey_after_time         = range_val("rekey_after_time", s.rekey_after_time)
+            e.rekey_timeout            = range_val("rekey_timeout", s.rekey_timeout)
+            e.reject_after_time        = range_val("reject_after_time", s.reject_after_time)
+            e.keepalive_timeout        = range_val("keepalive_timeout", s.keepalive_timeout)
+            e.max_handshake_attempts   = range_val("max_handshake_attempts", s.max_handshake_attempts)
+            if flag(s.random_trailers) then e.random_trailers = true end
+            if flag(s.disable_cookies) then e.disable_cookies = true end
+            e.peers[1].persistent_keepalive_interval = range_val("persistent_keepalive", s.persistent_keepalive, 65535)
         end
     end
     return e

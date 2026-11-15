@@ -285,6 +285,42 @@ async function toggleSubNode(btn) {
     loadData();
 }
 
+// AmneziaWG 3.x (core sing-box-lx >= 1.14.0-lx.32): [key in .conf, node field].
+// Edit-modal inputs are named "edit-" + field with "_" turned into "-".
+const AWG3_VALUE_FIELDS = [
+    ['HeaderProtectionKey', 'header_protection_key'],
+    ['ContentPaddingAddition', 'content_padding_addition'],
+    ['RekeyAfterTime', 'rekey_after_time'],
+    ['RekeyTimeout', 'rekey_timeout'],
+    ['RejectAfterTime', 'reject_after_time'],
+    ['KeepaliveTimeout', 'keepalive_timeout'],
+    ['MaxHandshakeAttempts', 'max_handshake_attempts'],
+];
+const AWG3_FLAG_FIELDS = [['RandomTrailers', 'random_trailers'], ['DisableCookies', 'disable_cookies']];
+const awg3Id = f => 'edit-' + f.replace(/_/g, '-');
+const awgFlag = v => /^(1|on|true|yes)$/i.test(String(v || ''));
+// a node uses AWG 3.x when any of its own fields is set (PersistentKeepalive alone is plain WireGuard)
+const isAwg3 = n => AWG3_VALUE_FIELDS.some(([, f]) => n[f]) || AWG3_FLAG_FIELDS.some(([, f]) => awgFlag(n[f]));
+
+// "Key = value" lines of a .conf (both sections, keys lower-cased); CRLF-safe
+function parseIniKeys(text) {
+    const conf = {};
+    text.split('\n').forEach(l => {
+        const m = l.trim().match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.+)$/);
+        if (m) conf[m[1].toLowerCase()] = m[2].trim();
+    });
+    return conf;
+}
+
+// AWG 3.x node fields from a parsed .conf; only what the file really sets
+function awg3FromConf(conf) {
+    const out = {};
+    AWG3_VALUE_FIELDS.forEach(([k, f]) => { const v = conf[k.toLowerCase()]; if (v) out[f] = v; });
+    AWG3_FLAG_FIELDS.forEach(([k, f]) => { if (awgFlag(conf[k.toLowerCase()])) out[f] = '1'; });
+    if (conf.persistentkeepalive) out.persistent_keepalive = conf.persistentkeepalive;
+    return out;
+}
+
 function exportNode(n) {
     if (!n) { alert('Узел не найден'); return; }
     let uri = '';
@@ -308,10 +344,13 @@ function exportNode(n) {
             [['Jc','jc'],['Jmin','jmin'],['Jmax','jmax'],['S1','s1'],['S2','s2'],['S3','s3'],['S4','s4'],
              ['H1','h1'],['H2','h2'],['H3','h3'],['H4','h4'],['I1','i1'],['I2','i2'],['I3','i3'],['I4','i4'],['I5','i5']]
                 .forEach(([k, f]) => { if (n[f] && n[f] !== '0') iface += `${k} = ${n[f]}\n`; });
+            AWG3_VALUE_FIELDS.forEach(([k, f]) => { if (n[f]) iface += `${k} = ${n[f]}\n`; });
+            AWG3_FLAG_FIELDS.forEach(([k, f]) => { if (awgFlag(n[f])) iface += `${k} = on\n`; });
         }
         uri = `${iface}\n[Peer]\nPublicKey = ${n.peer_public_key || ''}\n` +
               (n.pre_shared_key ? `PresharedKey = ${n.pre_shared_key}\n` : '') +
-              `Endpoint = ${n.server.includes(':') ? '[' + n.server + ']' : n.server}:${n.server_port}\nAllowedIPs = 0.0.0.0/0, ::/0\n`;
+              `Endpoint = ${n.server.includes(':') ? '[' + n.server + ']' : n.server}:${n.server_port}\nAllowedIPs = 0.0.0.0/0, ::/0\n` +
+              (n.persistent_keepalive ? `PersistentKeepalive = ${n.persistent_keepalive}\n` : '');
     } else if (n.type === 'hysteria2') {
         const params = new URLSearchParams();
         if (n.sni)                         params.set('sni', n.sni);
@@ -389,6 +428,9 @@ function openEditModal(btnEl) {
             document.getElementById('edit-s3').value  = n.s3  || '0';
             document.getElementById('edit-s4').value  = n.s4  || '0';
             document.getElementById('edit-psk').value = n.pre_shared_key || '';
+            AWG3_VALUE_FIELDS.forEach(([, f]) => { document.getElementById(awg3Id(f)).value = n[f] || ''; });
+            AWG3_FLAG_FIELDS.forEach(([, f]) => { document.getElementById(awg3Id(f)).checked = awgFlag(n[f]); });
+            document.getElementById('edit-persistent-keepalive').value = n.persistent_keepalive || '';
         }
     }
     document.getElementById('edit-modal').style.display = 'flex';
@@ -449,6 +491,10 @@ async function saveEditNode() {
             node.h3   = document.getElementById('edit-h3').value;
             node.h4   = document.getElementById('edit-h4').value;
             for (let i = 1; i <= 5; i++) node['i' + i] = document.getElementById('edit-i' + i).value;
+            // AWG 3.x: empty = not set (edit_node deletes the key); flags are "1" or empty
+            AWG3_VALUE_FIELDS.forEach(([, f]) => { node[f] = document.getElementById(awg3Id(f)).value.trim(); });
+            AWG3_FLAG_FIELDS.forEach(([, f]) => { node[f] = document.getElementById(awg3Id(f)).checked ? '1' : ''; });
+            node.persistent_keepalive = document.getElementById('edit-persistent-keepalive').value.trim();
         }
     }
 
@@ -553,7 +599,7 @@ function nodePortLabel(n) {
 }
 
 function protoLabel(n) {
-    if (n.type === 'amneziawg') return 'amneziaWG2';
+    if (n.type === 'amneziawg') return isAwg3(n) ? 'amneziaWG3' : 'amneziaWG2';
     if (n.type === 'hysteria2') return (n.obfs === 'salamander' || n.obfs === 'gecko') ? 'hysteria2-' + n.obfs : 'hysteria2';
     if (n.type === 'vless') {
         const parts = ['vless'];
@@ -1096,16 +1142,20 @@ async function importVpnFile(e) {
                 h3: String(awg.H3 || parseInt(awg.underloadPacketMagicHeader) || 0), h4: String(awg.H4 || parseInt(awg.transportPacketMagicHeader) || 0),
                 pre_shared_key: lc.psk_key || lc.psk || lc.preshared_key || lc.pre_shared_key || awg.psk || ''
             };
+            // AWG 2.x/3.x exports also keep the full client .conf text in last_config.config; it is
+            // the source for what the flat awg.* object lacks (S3/S4, I1-I5, MTU, all AWG 3.x fields)
+            const iniText = typeof lc.config === 'string' ? lc.config : '';
+            if (iniText.includes('[Interface]')) {
+                const c = parseIniKeys(iniText);
+                ['jc', 'jmin', 'jmax', 's1', 's2', 's3', 's4', 'h1', 'h2', 'h3', 'h4', 'i1', 'i2', 'i3', 'i4', 'i5', 'mtu']
+                    .forEach(k => { if (c[k]) node[k] = c[k]; });
+                if (!node.pre_shared_key && c.presharedkey) node.pre_shared_key = c.presharedkey;
+                Object.assign(node, awg3FromConf(c));
+            }
         } catch (jsonError) {
             // 3. If JSON parsing fails, try parsing as WireGuard/AWG's text .conf (INI) format
             if (text.includes('[Interface]') && text.includes('[Peer]')) {
-                const lines = text.split('\n');
-                let conf = {};
-                lines.forEach(l => {
-                    l = l.trim();
-                    const match = l.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.+)$/);
-                    if (match) conf[match[1].toLowerCase()] = match[2].trim();
-                });
+                const conf = parseIniKeys(text);
 
                 // host:port, [v6]:port or host (WARP: engage.cloudflareclient.com:2408)
                 const em = (conf.endpoint || '').match(/^\[?([^\]]+?)\]?(?::(\d+))?$/);
@@ -1125,6 +1175,7 @@ async function importVpnFile(e) {
                 };
                 if (conf.mtu) node.mtu = conf.mtu;
                 for (let i = 1; i <= 5; i++) if (conf['i' + i]) node['i' + i] = conf['i' + i];
+                Object.assign(node, awg3FromConf(conf));
             } else {
                 throw new Error("Неподдерживаемый формат файла. Ожидается .vpn (JSON) или .conf (INI)");
             }
@@ -1322,6 +1373,18 @@ async function importVlessUri() {
                 <div class="form-group" style="grid-column:1/-1"><label>i3</label><input type="text" id="edit-i3"></div>
                 <div class="form-group" style="grid-column:1/-1"><label>i4</label><input type="text" id="edit-i4"></div>
                 <div class="form-group" style="grid-column:1/-1"><label>i5</label><input type="text" id="edit-i5"></div>
+                <div style="grid-column:1/-1;color:#94a3b8;font-size:.85rem">AmneziaWG 3.x (ядро sing-box-lx 1.14.0-lx.32+). Пустое поле — не задано. Диапазон: «от-до».</div>
+                <div class="form-group" style="grid-column:1/-1"><label>Header Protection Key (base64; при заданном ключе S1–S4 ≥ 12)</label><input type="text" id="edit-header-protection-key"></div>
+                <div style="grid-column:1/-1;display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
+                    <div class="form-group"><label>ContentPaddingAddition, байт</label><input type="text" id="edit-content-padding-addition" placeholder="10-100"></div>
+                    <div class="form-group"><label>PersistentKeepalive, с</label><input type="text" id="edit-persistent-keepalive" placeholder="25-35"></div>
+                    <div class="form-group"><label>RekeyAfterTime, с</label><input type="text" id="edit-rekey-after-time" placeholder="100-120"></div>
+                    <div class="form-group"><label>RekeyTimeout, с</label><input type="text" id="edit-rekey-timeout" placeholder="3-7"></div>
+                    <div class="form-group"><label>RejectAfterTime, с</label><input type="text" id="edit-reject-after-time" placeholder="150-180"></div>
+                    <div class="form-group"><label>KeepaliveTimeout, с</label><input type="text" id="edit-keepalive-timeout" placeholder="5-15"></div>
+                    <div class="form-group"><label>MaxHandshakeAttempts</label><input type="text" id="edit-max-handshake-attempts" placeholder="15-20"></div>
+                    <div class="form-group"><label><input type="checkbox" id="edit-random-trailers"> RandomTrailers</label><label><input type="checkbox" id="edit-disable-cookies"> DisableCookies</label></div>
+                </div>
             </div>
             <div class="form-group"><label>MTU (WARP: 1280)</label><input type="text" id="edit-mtu"></div>
         </div>

@@ -65,6 +65,11 @@ local VLESS_TRANSPORT = { [""] = true, none = true, tcp = true, raw = true, ws =
                           httpupgrade = true, grpc = true, xhttp = true }
 local VLESS_FLOW = { [""] = true, ["xtls-rprx-vision"] = true, ["xtls-rprx-vision-udp443"] = true }
 
+-- AmneziaWG 3.x (core sing-box-lx >= 1.14.0-lx.32): padding and timing values are a
+-- number or a "from-to" range (bytes / seconds / attempts)
+local AWG3_RANGE_KEYS = { "content_padding_addition", "rekey_after_time", "rekey_timeout",
+                         "reject_after_time", "keepalive_timeout", "max_handshake_attempts" }
+
 -- Checks for every node type. section=nil → add_node (all required fields must be present),
 -- otherwise edit_node. A value that sing-box rejects at `sing-box check` would block rebuilding
 -- the whole config, so it is better refused here, with a readable message.
@@ -121,6 +126,24 @@ local function check_node_fields(node, section)
             ok, err = validate.awg_h(eff(node, section, k))
             if not ok then return false, k:upper() .. ": " .. err end
         end
+        -- AmneziaWG 3.x
+        local hpk = eff(node, section, "header_protection_key")
+        ok, err = validate.awg_hpk(hpk)
+        if not ok then return false, "Header protection key: " .. err end
+        if hpk ~= "" then
+            -- the header cipher takes its nonce from the junk padding of each message kind
+            for _, k in ipairs({ "s1", "s2", "s3", "s4" }) do
+                if (tonumber(eff(node, section, k)) or 0) < 12 then
+                    return false, "При header_protection_key каждый из S1–S4 должен быть не меньше 12 (" .. k:upper() .. " меньше)"
+                end
+            end
+        end
+        for _, k in ipairs(AWG3_RANGE_KEYS) do
+            ok, err = validate.awg_h(eff(node, section, k))
+            if not ok then return false, k .. ": " .. err end
+        end
+        ok, err = validate.awg_h(eff(node, section, "persistent_keepalive"), 65535)
+        if not ok then return false, "PersistentKeepalive: " .. err end
     end
     return true
 end
@@ -333,6 +356,9 @@ elseif action == "add_node" then
         private_key=true, peer_public_key=true, local_address=true, jc=true, jmin=true, jmax=true, s1=true, s2=true,
         s3=true, s4=true, pre_shared_key=true, h1=true, h2=true, h3=true, h4=true,
         i1=true, i2=true, i3=true, i4=true, i5=true, mtu=true,
+        header_protection_key=true, content_padding_addition=true, random_trailers=true, disable_cookies=true,
+        rekey_after_time=true, rekey_timeout=true, reject_after_time=true, keepalive_timeout=true,
+        max_handshake_attempts=true, persistent_keepalive=true,
         password=true, obfs=true, obfs_password=true, obfs_min_packet_size=true, obfs_max_packet_size=true,
         insecure=true, server_ports=true,
         transport=true, path=true, thost=true, mode=true, flow=true, enabled=true
@@ -373,6 +399,9 @@ elseif action == "edit_node" then
         private_key=true, peer_public_key=true, local_address=true, jc=true, jmin=true, jmax=true, s1=true, s2=true,
         s3=true, s4=true, pre_shared_key=true, h1=true, h2=true, h3=true, h4=true,
         i1=true, i2=true, i3=true, i4=true, i5=true, mtu=true,
+        header_protection_key=true, content_padding_addition=true, random_trailers=true, disable_cookies=true,
+        rekey_after_time=true, rekey_timeout=true, reject_after_time=true, keepalive_timeout=true,
+        max_handshake_attempts=true, persistent_keepalive=true,
         password=true, obfs=true, obfs_password=true, obfs_min_packet_size=true, obfs_max_packet_size=true,
         insecure=true, server_ports=true,
         transport=true, path=true, thost=true, mode=true, flow=true, enabled=true

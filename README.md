@@ -1,6 +1,6 @@
 # singA
 
-TProxy клиент для arm64 роутеров на OpenWrt c GUI на порту `1104`. Поддержка xhttp, aWG2, hy2. Раздельное туннелирование, гигиена DNS.
+TProxy клиент для arm64 роутеров на OpenWrt c GUI на порту `1104`. Поддержка xhttp, aWG2/aWG3.x, hy2. Раздельное туннелирование, гигиена DNS.
 
 ```sh
 sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install.sh)"
@@ -11,9 +11,9 @@ sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install
 ## Возможности
 
 **Протоколы**
-- AmneziaWG 2.0 - импорт файла `amnezia_config.vpn`, сгенерированного приложением AmneziaVPN, или конфига WARP .conf (см. [warpscout](https://github.com/vernette/warpscout))
+- amneziaWG 2.0 и 3.x - импорт файла `amnezia_config.vpn`, сгенерированного приложением AmneziaVPN, или конфига WARP `.conf` (см. [warpscout](https://github.com/vernette/warpscout))
 - vless + xhttp/tcp + reality - импорт по ссылке `vless://` (поддерживается ключ PaperVPN)
-- Hysteria2 - импорт по ссылке `hysteria2://` или `hy2://` (обфускация salamander и gecko, port hopping (диапазон задаётся как "xxx-yyy" на месте порта)
+- hysteria2 - импорт по ссылке `hysteria2://` или `hy2://`, обфускация salamander и gecko, port hopping (диапазон задаётся как "xxx-yyy" на месте порта)
 
 **Маршрутизация**
 - 3 режима: 1) всё в proxy; 2) всё в proxy, кроме РФ-доменов; 3) обход РКН (дефолт) - в proxy только заблокированное/замедленное в РФ + исключения
@@ -28,10 +28,10 @@ sh -c "$(curl -sL https://raw.githubusercontent.com/infinjest/singA/main/install
 - Блокировка QUIC (UDP/443) - часть приложений плохо работает с QUIC поверх туннеля, reject откатывает их на TCP. Включено по умолчанию
 - Блокировка прямых запросов к публичным DNS-резолверам - иначе часть клиентов обходила бы правила DNS роутера. Включено по умолчанию
 
-**Логи, автовыбор узла**
+**Логи, выбор узла, обновление подписок**
 - Просмотр 100 последних строк лога sing-box в UI (кнопка «Лог», обновление по кнопке)
-- При двух и более активных узлах - автовыбор самого быстрого
-- Автообновление подписок по расписанию
+- При двух и более активных узлах - автовыбор самого быстрого (urltest)
+- Автообновление подписок по расписанию (каждые 6-12-24 часа)
 
 ---
 
@@ -66,7 +66,7 @@ sh /usr/sbin/singbox-uninstall        # удаление (--purge для уда�
 
 | Компонент | Роль |
 |---|---|
-| [sing-box-lx](https://github.com/Leadaxe/sing-box-lx) | ядро (форк sing-box от Leadaxe с поддержкой xhttp и AmneziaWG2) |
+| [sing-box-lx](https://github.com/Leadaxe/sing-box-lx) | ядро (форк sing-box от Leadaxe с поддержкой xhttp, aWG2/aWG3.x) |
 | nftables TProxy | перехват трафика |
 | RPCD + UCI | API и хранение конфигурации |
 | Vanilla JS SPA | веб-интерфейс |
@@ -85,7 +85,7 @@ sh /usr/sbin/singbox-uninstall        # удаление (--purge для уда�
 | `sbin--singbox-compiler.lua` | `/usr/sbin/singbox-compiler` | транслятор UCI → JSON-конфиг sing-box: читает узлы, правила, DNS из UCI/sub_cache, атомарно записывает результат |
 | `rpcd--singbox.lua` | `/usr/libexec/rpcd/singbox` | RPCD-плагин, API веб-интерфейса через ubus |
 | `lib--singbox-validate.lua` | `/usr/lib/singbox/validate.lua` | общий модуль валидации UCI-полей - используется `rpcd` и `compiler` |
-| `sbin--singbox-sub-updater.sh` | `/usr/sbin/singbox-sub-updater` | загрузчик подписок: скачивает VLESS/AWG по URL из UCI, парсит в узлы, кэширует JSON в tmpfs |
+| `sbin--singbox-sub-updater.sh` | `/usr/sbin/singbox-sub-updater` | загрузчик подписок: скачивает vless/aWG по URL из UCI, парсит в узлы, кэширует JSON в tmpfs |
 | `etc-singbox--update-rules.sh` | `/etc/sing-box/update-rules.sh` | обновление баз: скачивает .srs, перезапускает sing-box; расписание задаётся через cron_schedule |
 | `www--singbox.html` | `/www/singbox/singbox.html` | одностраничный UI (порт 1104): авторизация через ubus session.login, управление параметрами/узлами/подписками |
 | `singbox-logtail` (генерируется в `install.sh`) | `/usr/sbin/singbox-logtail` | отдельный procd-инстанс поверх `logread -f -e sing-box`; кольцевой буфер последних 100 строк в `/var/run/sing-box_log.txt` |

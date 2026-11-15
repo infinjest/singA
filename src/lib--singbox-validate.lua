@@ -204,16 +204,31 @@ function M.uint(v, min, max)
     return true
 end
 
--- AmneziaWG 2.0 magic header: number or "from-to" range; empty = not set.
-function M.awg_h(v)
+-- AmneziaWG 2.0 magic header / AmneziaWG 3.x timing, padding and keepalive:
+-- number or "from-to" range; empty = not set. max defaults to uint32 (the
+-- keepalive interval is uint16, its caller passes 65535).
+function M.awg_h(v, max)
+    max = max or 4294967295
     if v == nil or v == "" then return true end
     local s = tostring(v)
     local a, b = s:match("^(%d+)%-(%d+)$")
     if not a then a = s:match("^(%d+)$") end
     if not a then return false, 'ожидается число или диапазон "от-до"' end
     a = tonumber(a); b = b and tonumber(b) or a
-    if a > 4294967295 or b > 4294967295 then return false, "значение больше 4294967295" end
+    if a > max or b > max then return false, "значение больше " .. string.format("%.0f", max) end
     if a > b then return false, "начало диапазона больше конца" end
+    return true
+end
+
+-- AmneziaWG 3.x header_protection_key: a 32-byte base64 key like any WireGuard one,
+-- but the core reads an all-zero key as "off" and refuses it; empty = not set.
+function M.awg_hpk(v)
+    if v == nil or v == "" then return true end
+    local ok, err = M.wg_key(v)
+    if not ok then return false, err end
+    if tostring(v) == string.rep("A", 43) .. "=" then
+        return false, "нулевой ключ означает «выключено» — оставьте поле пустым"
+    end
     return true
 end
 
